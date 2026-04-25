@@ -1,0 +1,22 @@
+---
+description: TESTING & QUALITY RULES - CORE PHILOSOPHY
+alwaysApply: false
+---
+# TESTING & QUALITY RULES
+## CORE PHILOSOPHY
+Tests are executable documentation. They must be deterministic, fast, and behavior-driven.
+
+## TESTING STRATEGY
+- Follow the Testing Pyramid: heavily favor fast, isolated unit tests, supplemented by integration and E2E tests.
+- Test behaviors and public interfaces, not private implementation details.
+- Implement strictly isolated tests: no shared mutable state, no dependencies on run order.
+
+## MOCKING & BOUNDARIES
+- Mock all external boundaries (network, disk, database, time) in unit tests.
+- Use dependency injection to make external dependencies easily mockable.
+- Ensure integration tests hit real database/service instances (via containers/ephemeral environments) rather than mocks.
+
+## COVERAGE & SCENARIOS
+- Cover the happy path, edge cases, and explicit failure modes/exceptions.
+- Reproduce discovered bugs as tests before fixing the underlying code.
+- Treat test code with the same quality standards as production code (DRY, well-named, modular).

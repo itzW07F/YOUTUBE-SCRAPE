@@ -1,0 +1,22 @@
+---
+description: CODING STANDARDS RULES - CORE PHILOSOPHY
+alwaysApply: false
+---
+# CODE STANDARDS RULES
+## CORE PHILOSOPHY
+KISS (Keep It Simple, Stupid), DRY (Don't Repeat Yourself), and maximum readability. Code is read ten times more than it is written.
+
+## NAMING & SEMANTICS
+- Use descriptive, intent-revealing names. No cryptic abbreviations (e.g., use `userAccount` over `usrAcc`).
+- Naming convention dictates behavior: functions act as verbs (`calculateTotal`), booleans as questions (`isValid`).
+- Eliminate magic numbers/strings; extract to globally/locally scoped constants.
+
+## FUNCTIONS & METHODS
+- Enforce Single Responsibility Principle (SRP): functions do exactly one thing.
+- Keep cyclomatic complexity low. Use early returns (guard clauses) to avoid deep nesting.
+- Prioritize pure functions and immutability. Avoid side effects unless explicitly required.
+
+## ERROR HANDLING
+- Handle errors explicitly and predictably; never fail silently.
+- Throw custom, descriptive errors for domain-specific failures.
+- Validate all external inputs at the system boundary before processing.

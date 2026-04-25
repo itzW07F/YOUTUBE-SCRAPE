@@ -1,0 +1,127 @@
+# youtube-scrape Configuration File
+# This is the single source of truth for all scraping options.
+# CLI arguments override these values.
+# Place this file at:
+#   - ~/.config/youtube-scrape/config.yaml (Linux/Mac)
+#   - youtube-scrape.yaml (project root)
+# Or specify explicitly: youtube-scrape --config /path/to/config.yaml <command>
+
+# =============================================================================
+# GLOBAL SETTINGS
+# =============================================================================
+
+# Logging configuration
+logging:
+  level: "INFO"                      # DEBUG, INFO, WARNING, ERROR
+  format: "%(levelname)s %(name)s %(message)s"
+
+# Output formatting and destinations
+output:
+  schema_version: "1"                # Schema version for output JSON
+  directory: "output"                 # Default output directory
+  write_metadata_json: true            # Write JSON metadata files
+  create_subdirectories: true          # Create video-id subdirectories
+
+# Browser/Camoufox behavior
+browser:
+  headless: true                     # Run browser headlessly
+  timeout_s: 45.0                    # Browser operation timeout (seconds)
+  reuse_context: true                # Reuse browser across operations
+  user_data_dir: null                # Persistent profile dir (null = temp)
+  proxy_server: null                 # Proxy URL (e.g., "http://proxy:8080")
+  page_settle_after_load_ms: 0       # Extra wait after page load (ms)
+  humanize: true                     # Human-like mouse movements
+  preroll_skip_budget_s: 55.0        # Max seconds to wait for ad skip
+
+# HTTP client settings
+http:
+  timeout_s: 30.0                    # HTTP request timeout
+  max_retries: 3                     # Retry attempts for failed requests
+
+# =============================================================================
+# FEATURE-SPECIFIC SETTINGS
+# =============================================================================
+
+# Video metadata scraping
+video:
+  enabled: true                      # Scrape video metadata
+  include_format_preview: true       # Include available format list
+  include_caption_tracks: true       # Include caption track list
+
+# Comment scraping
+comments:
+  enabled: true                      # Scrape comments
+  max_comments: 100                  # Max comments (null = unlimited)
+  fetch_all: false                   # Fetch until exhaustion (with safety cap)
+  include_replies: true              # Include reply comments
+  max_replies_per_thread: 3          # Max replies per thread (null = unlimited)
+  safety_ceiling: 50000              # Hard cap to prevent runaway scraping
+
+# Transcript/caption settings
+transcript:
+  enabled: true                      # Download transcripts
+  language: null                     # Preferred language (null = auto)
+  fmt: "txt"                         # Format: txt, vtt, or json
+  fallback_languages: []             # Fallback codes: ["en", "es", "auto"]
+
+# Thumbnail download
+thumbnails:
+  enabled: true                      # Download thumbnails
+  max_variants: null                 # Max variants (null = all)
+  write_image_files: true            # Write actual image files
+
+# Video/audio download
+download:
+  enabled: true                     # Download video/audio (default: metadata only)
+  format: "best"                     # best, worst, or itag number (e.g., 18)
+  stream: "video"                    # video or audio
+  audio_encoding: "container"        # container (m4a/webm) or mp3
+  experimental_fallback: false       # Allow experimental if yt-dlp fails
+  max_bytes: null                    # Cap bytes (for testing, null = full)
+  name_from_title: true             # Name files from video title
+
+# Batch processing
+batch:
+  fail_fast: false                   # Stop on first failure
+  max_failures_before_breaker: 5     # Circuit breaker threshold
+  default_mode: "video"              # video, comments, or transcript
+
+# =============================================================================
+# USAGE EXAMPLES
+# =============================================================================
+#
+# # 1. Full scrape with defaults from config file:
+# youtube-scrape video "https://youtube.com/watch?v=..."
+#
+# # 2. Override config values via CLI:
+# youtube-scrape --log-level DEBUG --headless video "..."
+#
+# # 3. Use specific config file:
+# youtube-scrape --config ./my-config.yaml video "..."
+#
+# # 4. Scrape comments with config defaults:
+# youtube-scrape comments "https://youtube.com/watch?v=..."
+#
+# # 5. Override comment settings via CLI:
+# youtube-scrape comments --max-comments 500 --all "..."
+
+# =============================================================================
+# PROFILES (Example - you can create multiple config files)
+# =============================================================================
+#
+# # For quick smoke testing (minimal data):
+# # config-smoke.yaml
+# comments:
+#   max_comments: 10
+#   include_replies: false
+# thumbnails:
+#   max_variants: 1
+#
+# # For archival (maximum data):
+# # config-archive.yaml
+# comments:
+#   fetch_all: true
+#   include_replies: true
+# download:
+#   enabled: true
+#   format: "best"

@@ -1,0 +1,87 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "youtube-scrape"
+version = "0.1.0"
+description = "Cross-platform YouTube scraper CLI (Camoufox + Playwright, no Data API, no yt-dlp)."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+license = { text = "MIT" }
+authors = [{ name = "YOUTUBE-SCRAPE" }]
+dependencies = [
+  # Justification: stealth Firefox build + Playwright bridge per product requirements.
+  "camoufox==0.4.11",
+  # Justification: browser automation API used by Camoufox.
+  "playwright==1.58.0",
+  # Justification: async-capable HTTP for captions, thumbnails, innertube, media segments.
+  "httpx==0.28.1",
+  # Justification: structured CLI subcommands and typed options.
+  "typer==0.15.2",
+  # Justification: Typer 0.15 rich help regresses on Click 8.2+ (metavar generation).
+  "click==8.1.7",
+  # Justification: settings + output models with validation at boundaries.
+  "pydantic==2.11.7",
+  "pydantic-settings==2.9.1",
+  # Justification: safe parsing of caption XML from YouTube timedtext endpoints.
+  "defusedxml==0.7.1",
+  # Justification: primary video/audio downloader - handles ciphering, impersonation, full files.
+  "yt-dlp==2026.3.17",
+  # Justification: required by yt-dlp for TLS impersonation (avoids YouTube 403s).
+  "curl-cffi==0.15.0",
+  # Justification: YAML config file support.
+  "pyyaml==6.0.3",
+  # Justification: FastAPI for HTTP API server (GUI backend).
+  "fastapi==0.136.1",
+  # Justification: ASGI server for FastAPI.
+  "uvicorn[standard]==0.46.0",
+  # Justification: WebSocket support for real-time progress updates.
+  "websockets==16.0",
+  # Justification: multipart form parsing for file uploads.
+  "python-multipart==0.0.26",
+]
+
+[project.scripts]
+youtube-scrape = "youtube_scrape.cli.main:app"
+
+[project.optional-dependencies]
+dev = [
+  "pytest==8.4.1",
+  "pytest-asyncio==1.1.0",
+  "ruff==0.12.7",
+  "mypy==1.17.0",
+  "types-defusedxml==0.7.0.20260408",
+  "pre-commit==4.2.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/youtube_scrape"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/youtube_scrape", "README.md", "docs", "config"]
+
+[tool.ruff]
+target-version = "py312"
+src = ["src", "tests"]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_configs = true
+mypy_path = ["src"]
+packages = ["youtube_scrape"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-m \"not browser and not live_reference\""
+markers = [
+  "browser: needs Camoufox/Playwright and RUN_BROWSER_TESTS=1",
+  "live_reference: hits real YouTube; needs RUN_BROWSER_TESTS=1 and RUN_LIVE_REFERENCE_TESTS=1",
+]
+filterwarnings = ["ignore::DeprecationWarning"]

@@ -1,0 +1,37 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+.coverage
+htmlcov/
+.env
+
+# Local dependency installs and downloaded runtime payloads
+node_modules/
+gui/node_modules/
+gui/out/
+gui/dist/
+gui/resources/
+gui/verify-screenshot.png
+
+# Local scrape output and packaged artifacts
+/output/
+*.AppImage
+*.deb
+*.rpm
+*.snap
+*.dmg
+*.exe
+
+# Electron dev (append-only diagnostics)
+gui/.dev-electron.log
+
+# Generated integration artifacts (keep README + .gitkeep)
+tests/output/*
+!tests/output/README.md
+!tests/output/.gitkeep

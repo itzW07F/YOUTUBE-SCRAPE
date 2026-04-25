@@ -1,0 +1,56 @@
+{
+  "contents": {
+    "twoColumnWatchNextResults": {
+      "results": {
+        "results": {
+          "contents": [
+            {
+              "itemSectionRenderer": {
+                "contents": [
+                  {
+                    "commentThreadRenderer": {
+                      "comment": {
+                        "commentRenderer": {
+                          "commentId": "abc",
+                          "contentText": {
+                            "runs": [{ "text": "Top level" }]
+                          },
+                          "authorText": { "simpleText": "Alice" },
+                          "publishedTimeText": { "simpleText": "1 day ago" },
+                          "likeCount": 3,
+                          "authorEndpoint": {
+                            "browseEndpoint": { "browseId": "UCauthor" }
+                          }
+                        }
+                      },
+                      "replies": {
+                        "commentRepliesRenderer": {
+                          "contents": [
+                            {
+                              "commentRenderer": {
+                                "commentId": "def",
+                                "contentText": {
+                                  "runs": [{ "text": "Reply text" }]
+                                },
+                                "authorText": { "simpleText": "Bob" },
+                                "publishedTimeText": { "simpleText": "20 hours ago" },
+                                "likeCount": 1,
+                                "authorEndpoint": {
+                                  "browseEndpoint": { "browseId": "UCreply" }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

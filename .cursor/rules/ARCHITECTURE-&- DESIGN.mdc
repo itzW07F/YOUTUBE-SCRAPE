@@ -1,0 +1,23 @@
+---
+description: ARCHITECTURE & DESIGN RULES - CORE PHILOSOPHY
+alwaysApply: false
+---
+# ARCHITECTURE & DESIGN RULES
+## CORE PHILOSOPHY
+Decoupled, scalable, and resilient systems utilizing composition and clear boundaries.
+
+## STRUCTURAL PATTERNS
+- Adhere strictly to SOLID principles and Clean Architecture concepts.
+- Isolate Business Logic (Domain) from I/O, UI, and external services (Ports & Adapters pattern).
+- Favor Composition over Inheritance to prevent rigid hierarchies.
+- Maintain unidirectional data flow where applicable; centralize and protect state mutation.
+
+## MODULE BOUNDARIES
+- Design modules as black boxes: expose minimal public APIs, hide implementation details.
+- Prevent circular dependencies via strict dependency inversion.
+- Cross-module communication must happen via defined interfaces or event buses, never direct state access.
+
+## RESILIENCE & OBSERVABILITY
+- Design for failure: implement retries, timeouts, and circuit breakers for external calls.
+- Standardize logging, metrics, and tracing hooks at the architectural level.
+- Ensure all modules are horizontally scalable and stateless where possible.

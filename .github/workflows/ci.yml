@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev]"
+      - name: Ruff
+        run: |
+          ruff check src tests
+          ruff format --check src tests
+      - name: Mypy
+        run: mypy src/youtube_scrape
+      - name: Pytest
+        run: pytest -q
+
+  package:
+    # PyInstaller + Playwright/Camoufox needs extra hooks per OS; keep green builds on Linux first.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build tooling
+        run: pip install pyinstaller==6.16.0 ".[dev]"
+      - name: Build PyInstaller bundle
+        env:
+          PYTHONPATH: src
+        run: pyinstaller --noconfirm --log-level ERROR youtube-scrape.spec
+      - uses: actions/upload-artifact@v4
+        with:
+          name: youtube-scrape-linux-pyinstaller
+          path: dist/youtube-scrape*

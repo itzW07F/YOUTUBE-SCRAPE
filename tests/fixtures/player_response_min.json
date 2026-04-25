@@ -1,0 +1,67 @@
+{
+  "videoDetails": {
+    "videoId": "dQw4w9WgXcQ",
+    "title": "Sample",
+    "lengthSeconds": "212",
+    "viewCount": "1,234,567",
+    "author": "Sample Channel",
+    "channelId": "UCuAXFkgsw1L7xaCfnd5JJOw",
+    "shortDescription": "Hello world",
+    "keywords": ["music", "sample"],
+    "isLiveContent": "false",
+    "thumbnail": {
+      "thumbnails": [
+        {
+          "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/default.jpg",
+          "width": 120,
+          "height": 90
+        },
+        {
+          "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg",
+          "width": 320,
+          "height": 180
+        },
+        {
+          "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+          "width": 480,
+          "height": 360
+        }
+      ]
+    }
+  },
+  "microformat": {
+    "playerMicroformatRenderer": {
+      "publishDate": "2009-10-25T06:57:33+00:00"
+    }
+  },
+  "captions": {
+    "playerCaptionsTracklistRenderer": {
+      "captionTracks": [
+        {
+          "languageCode": "en",
+          "name": { "simpleText": "English" },
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=dQw4w9WgXcQ&lang=en"
+        }
+      ]
+    }
+  },
+  "streamingData": {
+    "formats": [
+      {
+        "itag": 18,
+        "mimeType": "video/mp4; codecs=\"avc1.42001E, mp4a.40.2\"",
+        "qualityLabel": "360p",
+        "url": "https://example.com/progressive.mp4",
+        "contentLength": "12345678"
+      }
+    ],
+    "adaptiveFormats": [
+      {
+        "itag": 137,
+        "mimeType": "video/mp4; codecs=\"avc1.640028\"",
+        "qualityLabel": "1080p",
+        "signatureCipher": "s=abc"
+      }
+    ]
+  }
+}

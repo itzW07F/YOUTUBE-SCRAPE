@@ -1,0 +1,23 @@
+{
+  "extends": "@electron-toolkit/tsconfig/tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@renderer/*": ["src/renderer/*"]
+    },
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["react", "react-dom"]
+  },
+  "include": ["src/renderer/**/*", "src/preload/**/*"],
+  "exclude": ["node_modules", "dist", "out"]
+}

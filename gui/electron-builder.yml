@@ -1,0 +1,93 @@
+appId: com.youtube-scrape.app
+productName: YouTube Scrape Pro
+copyright: Copyright © 2026
+directories:
+  buildResources: build
+  output: dist
+files:
+  - filter:
+      - out/**
+      - assets/**
+      - '!node_modules/**/*.{mk,a,peg,c,h,pem,DS_Store,editorconfig,gitignore,gitattributes,travis.yml,ci.yml,appveyor.yml,eslintignore,eslintrc.js,prettierignore,babelrc,editorconfig}'
+      - '!node_modules/**/*.{ts,tsx,js.map}'
+      - '!node_modules/**/*.d.ts'
+      - '!node_modules/.bin'
+      - '!**/*.{o,obj,lib,lib64,a,exp,so,dll,dylib,debug,tlog,ilk,pdb}'
+      - '!node_modules/**/{docs,doc,tests,test,examples,example,benchmarks,scripts}/**'
+      - '!node_modules/**/*.{log,md,yaml,yml,svg,png,jpg,jpeg,gif,ico,webp}'
+extraResources:
+  - from: ../src
+    to: src
+    filter:
+      - '**/*.py'
+      - '!**/__pycache__/**'
+      - '!**/*.pyc'
+  - from: ../output
+    to: output
+    filter:
+      - '**/*'
+asarUnpack:
+  - '**/*.{node,dll,so,dylib}'
+  - '**/node_modules/sharp/**/*'
+  - '**/node_modules/camoufox/**/*'
+win:
+  executableName: YouTube Scrape Pro
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - ia32
+  publisherName: YouTube Scrape
+  verifyUpdateCodeSignature: false
+nsis:
+  artifactName: ${name}-${version}-setup.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
+  category: public.app-category.utilities
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+dmg:
+  artifactName: ${name}-${version}-${arch}.${ext}
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+linux:
+  target:
+    - AppImage
+    - deb
+    - rpm
+    - snap
+  category: Utility
+  maintainer: youtube-scrape
+  synopsis: Professional YouTube Scraper
+  description: Cross-platform YouTube scraper with modern GUI
+appImage:
+  artifactName: ${name}-${version}.${ext}
+publish:
+  provider: generic
+  url: https://example.com/auto-updates
+protocols:
+  - name: YouTube Scrape
+    schemes:
+      - youtube-scrape

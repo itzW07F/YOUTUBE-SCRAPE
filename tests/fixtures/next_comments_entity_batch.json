@@ -1,0 +1,53 @@
+{
+  "frameworkUpdates": {
+    "entityBatchUpdate": {
+      "mutations": [
+        {
+          "type": "ENTITY_MUTATION_TYPE_REPLACE",
+          "payload": {
+            "commentEntityPayload": {
+              "key": "EhpjMV9jb21tZW50X2tleQo%3D",
+              "properties": {
+                "commentId": "UgxEntityTopCommentIdAA",
+                "content": { "content": "Entity-model top comment body." },
+                "publishedTime": "1 hour ago",
+                "replyLevel": 0
+              },
+              "author": {
+                "displayName": "Entity Author",
+                "channelId": "UCentityauthor0001"
+              },
+              "toolbar": {
+                "likeCountLiked": "12",
+                "likeCountNotliked": "11",
+                "replyCount": "2",
+                "likeCountA11y": "11 likes"
+              }
+            }
+          }
+        },
+        {
+          "type": "ENTITY_MUTATION_TYPE_REPLACE",
+          "payload": {
+            "commentEntityPayload": {
+              "properties": {
+                "commentId": "UgxEntityTopCommentIdAA.childsuffix",
+                "content": { "content": "Nested reply via entity." },
+                "publishedTime": "55 minutes ago",
+                "replyLevel": 1
+              },
+              "author": {
+                "displayName": "Replier",
+                "channelId": "UCreplier0000000001"
+              },
+              "toolbar": {
+                "likeCountNotliked": "1.5K",
+                "likeCountA11y": "1.5K likes"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

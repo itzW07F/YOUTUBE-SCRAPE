@@ -1,0 +1,23 @@
+---
+description: INITIAL RULES FOR CODEBASE DEVELOPMENT
+alwaysApply: false
+---
+# INITIAL CODEBASE RULES
+## CORE PHILOSOPHY
+Zero-friction onboarding, strict environment isolation, and minimal initial footprint.
+
+## DIRECTORY & SCAFFOLDING
+- Enforce strict separation of concerns: isolate `src/`, `tests/`, `docs/`, and `config/`.
+- Maintain a single source of truth for all configuration values.
+- Abstract environment variables; require a `.env.example` or equivalent schema template.
+- Implement strict path aliasing to avoid deep relative imports.
+
+## DEPENDENCY MANAGEMENT
+- Adopt a zero-trust dependency model: minimize external libraries. Justify every addition.
+- Lock all dependency versions explicitly to guarantee deterministic builds.
+- Separate runtime dependencies strictly from build/development dependencies.
+
+## PIPELINE & AUTOMATION PREPARATION
+- Integrate static analysis, linting, and formatting from commit zero.
+- Scaffold pre-commit/pre-push hooks to enforce code standards before CI/CD.
+- Ensure the project is container-ready or virtually isolated from the host OS.

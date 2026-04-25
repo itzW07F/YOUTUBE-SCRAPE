@@ -1,0 +1,263 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Base rem scale (Tailwind text-* uses rem); adjusted from Settings → uiFontSizePercent */
+html {
+  font-size: calc(16px * var(--app-font-scale, 1));
+}
+
+/* --- Light theme: app uses hardcoded dark Tailwind classes; remaps them when data-theme=light */
+html[data-theme="dark"] body {
+  background-color: #0a0a0f;
+  color: #ffffff;
+}
+
+html[data-theme="light"] body {
+  background-color: #f4f4f5;
+  color: #18181b;
+}
+
+html[data-theme="light"] .text-white,
+html[data-theme="light"] .text-space-200 {
+  color: #18181b !important;
+}
+
+html[data-theme="light"] .text-space-300,
+html[data-theme="light"] .text-space-400 {
+  color: #52525b !important;
+}
+
+html[data-theme="light"] .text-space-500 {
+  color: #71717a !important;
+}
+
+html[data-theme="light"] .bg-space-900,
+html[data-theme="light"] .bg-\[\#0a0a0f\] {
+  background-color: #f4f4f5 !important;
+}
+
+html[data-theme="light"] .bg-space-800,
+html[data-theme="light"] .bg-space-800\/50,
+html[data-theme="light"] .bg-space-800\/30 {
+  background-color: rgba(255, 255, 255, 0.9) !important;
+}
+
+html[data-theme="light"] .bg-space-700 {
+  background-color: #e4e4e7 !important;
+}
+
+html[data-theme="light"] .bg-space-600 {
+  background-color: #d4d4d8 !important;
+}
+
+html[data-theme="light"] .border-glass-border {
+  border-color: rgba(0, 0, 0, 0.08) !important;
+}
+
+html[data-theme="light"] .glass-card {
+  background: rgba(255, 255, 255, 0.7) !important;
+  border-color: rgba(0, 0, 0, 0.08) !important;
+}
+
+html[data-theme="light"] .code-block {
+  background: #f4f4f5 !important;
+  border-color: rgba(0, 0, 0, 0.1) !important;
+  color: #18181b !important;
+}
+
+html[data-theme="light"] .futuristic-input {
+  background: #ffffff !important;
+  border-color: rgba(0, 0, 0, 0.12) !important;
+  color: #18181b !important;
+}
+
+html[data-theme="light"] .futuristic-input::placeholder {
+  color: #71717a !important;
+}
+
+html[data-theme="light"] .toast {
+  background: rgba(255, 255, 255, 0.95) !important;
+  color: #18181b !important;
+  border-color: rgba(0, 0, 0, 0.08) !important;
+}
+
+/* Frameless window: title bar is custom; this region is draggable (Electron). */
+.app-region-drag {
+  -webkit-app-region: drag;
+}
+.app-region-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Custom scrollbar for futuristic theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  transition: background 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Glass morphism card styles */
+.glass-card {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+}
+
+.glass-card-hover:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+/* Gradient borders */
+.gradient-border {
+  position: relative;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+}
+
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(0, 212, 255, 0.5), rgba(124, 58, 237, 0.5));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* Neon text glow */
+.neon-text {
+  text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+}
+
+.neon-text-purple {
+  text-shadow: 0 0 10px rgba(124, 58, 237, 0.5);
+}
+
+/* Input styles */
+.futuristic-input {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: white;
+  transition: all 0.2s ease;
+  outline: none;
+}
+
+.futuristic-input:focus {
+  border-color: rgba(0, 212, 255, 0.5);
+  box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.1);
+}
+
+.futuristic-input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+/* Button styles */
+.futuristic-btn {
+  background: linear-gradient(135deg, rgba(0, 212, 255, 0.1), rgba(124, 58, 237, 0.1));
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  border-radius: 8px;
+  padding: 10px 20px;
+  color: #00d4ff;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.futuristic-btn:hover {
+  background: linear-gradient(135deg, rgba(0, 212, 255, 0.2), rgba(124, 58, 237, 0.2));
+  border-color: rgba(0, 212, 255, 0.5);
+  box-shadow: 0 0 15px rgba(0, 212, 255, 0.3);
+}
+
+.futuristic-btn-primary {
+  background: linear-gradient(135deg, #00d4ff, #7c3aed);
+  border: none;
+  color: white;
+}
+
+.futuristic-btn-primary:hover {
+  box-shadow: 0 0 20px rgba(0, 212, 255, 0.5);
+}
+
+/* Loading animation */
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(1.2);
+    opacity: 0;
+  }
+}
+
+.loading-ring::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  border: 2px solid rgba(0, 212, 255, 0.5);
+  animation: pulse-ring 1.5s ease-out infinite;
+}
+
+/* Code block styles */
+.code-block {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* Progress bar */
+.progress-bar {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  background: linear-gradient(90deg, #00d4ff, #7c3aed);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+/* Toast notifications */
+.toast-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 50;
+}
+
+.toast {
+  background: rgba(26, 26, 46, 0.95);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 12px 16px;
+  color: white;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}

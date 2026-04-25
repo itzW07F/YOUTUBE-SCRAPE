@@ -1,0 +1,23 @@
+---
+description: DOCUMENTATION RULES - CORE PHILOSOPHY
+alwaysApply: false
+---
+# DOCUMENTATION RULES
+## CORE PHILOSOPHY
+Documentation is code. It must be concise, synchronously updated, and focused on context over mechanics.
+
+## ARCHITECTURE & DECISIONS
+- Maintain an Architectural Decision Records (ADR) log for all significant technical choices. Include Context, Decision, and Consequences.
+- Provide a high-level system architecture diagram or text equivalent in the root documentation.
+
+## INLINE COMMENTS
+- Document the "Why", not the "What". Code explains how it works; comments explain why it was written that way.
+- Flag technical debt explicitly with standardized tags (e.g., `TODO:`, `FIXME:`, `HACK:`).
+- Add rich type-hinting/docstrings to all public APIs detailing inputs, outputs, side-effects, and thrown errors.
+
+## REPOSITORY README
+- The README must contain: 
+  1. Purpose of the system.
+  2. Prerequisites (exact tooling versions).
+  3. One-command setup instructions.
+  4. Run/Test instructions.
