@@ -304,8 +304,8 @@ See [gui/README.md](gui/README.md) for full documentation.
 
 ## Documentation
 
-- Architecture: [docs/architecture.md](docs/architecture.md)
-- ADRs: [docs/adr/](docs/adr/)
+- Architecture: [Documentation/architecture.md](Documentation/architecture.md)
+- ADRs: [Documentation/adr/](Documentation/adr/)
 - GUI: [gui/README.md](gui/README.md)
 
 ## Legal

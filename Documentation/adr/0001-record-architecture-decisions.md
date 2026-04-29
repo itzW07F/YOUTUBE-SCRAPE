@@ -10,7 +10,7 @@ The repository follows project documentation rules requiring an ADR log.
 
 ## Decision
 
-Use numbered ADRs in `docs/adr/` with Context / Decision / Consequences.
+Use numbered ADRs in `Documentation/adr/` with Context / Decision / Consequences.
 
 ## Consequences
 
