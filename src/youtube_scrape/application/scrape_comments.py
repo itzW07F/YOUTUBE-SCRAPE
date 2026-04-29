@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+from datetime import UTC, datetime
 from typing import Any
 
 from youtube_scrape.application.envelope import make_envelope
@@ -60,10 +61,12 @@ class ScrapeCommentsService:
             reply_cap: int | None = 0
         else:
             reply_cap = max_replies_per_thread
+        reference_now = datetime.now(UTC)
         comments = extract_comment_records_from_response(
             initial,
             max_replies_per_thread=reply_cap,
             include_replies=include_replies,
+            now_utc=reference_now,
         )
         seen_ids: set[str] = {c.comment_id for c in comments if c.comment_id}
 
@@ -100,6 +103,7 @@ class ScrapeCommentsService:
                 resp,
                 max_replies_per_thread=reply_cap,
                 include_replies=include_replies,
+                now_utc=reference_now,
             )
             for c in fresh:
                 if c.comment_id and c.comment_id not in seen_ids:

@@ -16,7 +16,7 @@ interface HeaderProps {
 const viewTitles: Record<string, string> = {
   dashboard: 'Dashboard',
   scrape: 'New Scrape',
-  jobs: 'Job Monitor',
+  jobs: 'Scrape Jobs',
   results: 'Results',
   gallery: 'Video Gallery',
   settings: 'Settings',

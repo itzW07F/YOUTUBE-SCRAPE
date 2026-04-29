@@ -5,7 +5,24 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { pythonBridge } from './python-bridge'
 import { devLogLine } from './dev-logger'
 import { setupAppMediaProtocol } from './media-serve'
-import { discoverScrapeOutputs, listOutputDownloadMedia, readOutputArtifact, readOutputVideoMeta } from './output-read'
+import {
+  applyDashboardTrackerIncrements,
+  flushDashboardTrackers,
+  readDashboardTrackers,
+  refreshDashboardStorage,
+  syncDashboardAfterJob,
+} from './dashboard-trackers-file'
+import type {
+  DashboardTrackers,
+  DashboardTrackerIncrements,
+} from '../shared/dashboardTrackers'
+import {
+  deleteOutputScrapeDir,
+  discoverScrapeOutputs,
+  listOutputDownloadMedia,
+  readOutputArtifact,
+  readOutputVideoMeta,
+} from './output-read'
 
 // electron-store@10 is ESM-only; bundled CJS `require` yields `{ default: Store }` under Electron.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -43,20 +60,27 @@ const store = new Store()
 // Keep track of window state
 let mainWindow: BrowserWindow | null = null
 
+/** Narrowest width where sidebar + jobs header/actions stay usable (no overlapping controls). Tune if layout changes. */
+const MAIN_WINDOW_MIN_WIDTH = 1200
+
+/** Shortest height before content/layout feels cramped. Tune after manual resize testing. */
+const MAIN_WINDOW_MIN_HEIGHT = 900
+
 function createWindow(): void {
   devLogLine(
     `createWindow: is.dev=${is.dev} ELECTRON_RENDERER_URL=${process.env['ELECTRON_RENDERER_URL'] ?? 'none'}`
   )
 
-  // Create the browser window
+  // Create the browser window (opens at minimum usable size, centered on the primary display)
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 1000,
-    minHeight: 600,
+    width: MAIN_WINDOW_MIN_WIDTH,
+    height: MAIN_WINDOW_MIN_HEIGHT,
+    minWidth: MAIN_WINDOW_MIN_WIDTH,
+    minHeight: MAIN_WINDOW_MIN_HEIGHT,
+    center: true,
     show: false,
     frame: false,
-    autoHideMenuBar: true,
+    autoHideMenuBar: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -117,12 +141,77 @@ function createWindow(): void {
   })
 }
 
+function broadcastDashboardTrackers(data: DashboardTrackers): void {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (w.isDestroyed()) {
+      continue
+    }
+    w.webContents.send('dashboard-trackers:updated', data)
+  }
+}
+
+function buildApplicationMenu(): Menu {
+  const template: Electron.MenuItemConstructorOptions[] = []
+  if (process.platform === 'darwin') {
+    template.push({
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    })
+  }
+  template.push({
+    label: 'File',
+    submenu: [
+      {
+        label: 'Flush Dashboard Trackers…',
+        click: async () => {
+          const win = BrowserWindow.getFocusedWindow() ?? mainWindow
+          if (!win) {
+            return
+          }
+          const { response } = await dialog.showMessageBox(win, {
+            type: 'warning',
+            buttons: ['Cancel', 'Flush'],
+            defaultId: 0,
+            cancelId: 0,
+            title: 'Flush dashboard trackers',
+            message: 'Reset lifetime scrape and comment totals?',
+            detail:
+              'Total storage is recalculated from your configured output folders. Jobs, results, and files are not removed.',
+          })
+          if (response !== 1) {
+            return
+          }
+          const next = flushDashboardTrackers(store)
+          broadcastDashboardTrackers(next)
+        },
+      },
+      ...(process.platform === 'darwin'
+        ? []
+        : ([
+            { type: 'separator' },
+            { role: 'quit' },
+          ] as Electron.MenuItemConstructorOptions[])),
+    ],
+  })
+  return Menu.buildFromTemplate(template)
+}
+
 // App event handlers
 app.whenReady().then(() => {
   devLogLine(`app whenReady: version=${app.getVersion()} userData=${app.getPath('userData')}`)
 
   setupAppMediaProtocol(store)
-  Menu.setApplicationMenu(null)
+  Menu.setApplicationMenu(buildApplicationMenu())
 
   // Set app user model id for Windows
   electronApp.setAppUserModelId('com.electron.youtube-scrape')
@@ -208,6 +297,10 @@ app.whenReady().then(() => {
     return discoverScrapeOutputs(store)
   })
 
+  ipcMain.handle('output:deleteScrapeDir', (_, outputDir: string) => {
+    return deleteOutputScrapeDir(outputDir, store)
+  })
+
   // IPC handlers for window controls
   ipcMain.handle('window:minimize', () => {
     mainWindow?.minimize()
@@ -240,6 +333,28 @@ app.whenReady().then(() => {
 
   ipcMain.handle('store:delete', (_, key: string) => {
     store.delete(key)
+  })
+
+  ipcMain.handle('dashboardTrackers:get', () => {
+    return readDashboardTrackers()
+  })
+
+  ipcMain.handle('dashboardTrackers:applyIncrements', (_, increments: DashboardTrackerIncrements) => {
+    const next = applyDashboardTrackerIncrements(increments)
+    broadcastDashboardTrackers(next)
+    return next
+  })
+
+  ipcMain.handle('dashboardTrackers:refreshStorage', () => {
+    const next = refreshDashboardStorage(store)
+    broadcastDashboardTrackers(next)
+    return next
+  })
+
+  ipcMain.handle('dashboardTrackers:syncAfterJob', (_, outputDir: string) => {
+    const next = syncDashboardAfterJob(outputDir, store)
+    broadcastDashboardTrackers(next)
+    return next
   })
 
   // Create window

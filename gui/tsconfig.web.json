@@ -18,6 +18,6 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["react", "react-dom"]
   },
-  "include": ["src/renderer/**/*", "src/preload/**/*"],
+  "include": ["src/renderer/**/*", "src/preload/**/*", "src/shared/**/*.ts"],
   "exclude": ["node_modules", "dist", "out"]
 }

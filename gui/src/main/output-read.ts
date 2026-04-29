@@ -1,7 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type Store from 'electron-store'
-import { getAllowedOutputRoots, isOutputDirAllowed, isPathAllowedForMedia } from './media-serve'
+import {
+  getAllowedOutputRoots,
+  isOutputDirAllowed,
+  isPathAllowedForMedia,
+} from './media-serve'
 
 export interface VideoMetaRead {
   hasArtifacts: boolean
@@ -319,6 +323,44 @@ function scanForVideoJsonDirs(absoluteRoot: string, depth: number, seen: Set<str
       continue
     }
     scanForVideoJsonDirs(sub, depth + 1, seen, out)
+  }
+}
+
+/**
+ * Remove a single scrape output folder (must be a subdirectory of an allowed root, not the root itself).
+ */
+export function deleteOutputScrapeDir(
+  outputDir: string,
+  store: Store
+): { ok: boolean; error?: string } {
+  if (!outputDir || typeof outputDir !== 'string') {
+    return { ok: false, error: 'Invalid path' }
+  }
+  const resolved = path.resolve(outputDir)
+  if (!isOutputDirAllowed(resolved, store)) {
+    return { ok: false, error: 'Folder is outside the configured output directory' }
+  }
+  const roots = getAllowedOutputRoots(store)
+  for (const root of roots) {
+    if (resolved === path.resolve(root)) {
+      return { ok: false, error: 'Cannot delete an output root directory' }
+    }
+  }
+  try {
+    if (!fs.existsSync(resolved)) {
+      return { ok: true }
+    }
+    if (!fs.statSync(resolved).isDirectory()) {
+      return { ok: false, error: 'Path is not a directory' }
+    }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+  try {
+    fs.rmSync(resolved, { recursive: true, force: true })
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
 }
 

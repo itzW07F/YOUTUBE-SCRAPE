@@ -21,8 +21,17 @@ class VideoMetadata(BaseModel):
     channel_title: str | None = None
     description: str | None = None
     published_at: datetime | None = None
+    published_text: str | None = None
     view_count: int | None = None
     like_count: int | None = None
+    dislike_count: int | None = None
+    dislike_source: Literal["return_youtube_dislike"] | None = Field(
+        default=None,
+        description=(
+            "When dislike_count came from Return YouTube Dislike project's public API (/votes), "
+            "not from YouTube's player or watch markup."
+        ),
+    )
     duration_seconds: int | None = None
     thumbnails: list[ThumbnailRef] = Field(default_factory=list)
     keywords: list[str] = Field(default_factory=list)
@@ -43,7 +52,11 @@ class CommentRecord(BaseModel):
     author: str | None = None
     author_channel_id: str | None = None
     published_text: str | None = None
-    like_count: int | None = None
+    published_at: datetime | None = None
+    like_count: int | None = Field(
+        default=None,
+        description="Thumbs-up count from InnerTube payloads; per-comment dislike counts are not provided.",
+    )
     is_reply: bool = False
     parent_comment_id: str | None = None
 

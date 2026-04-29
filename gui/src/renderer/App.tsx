@@ -7,6 +7,7 @@ import ScrapeView from './components/ScrapeView'
 import JobsView from './components/JobsView'
 import ResultsView from './components/ResultsView'
 import VideoGalleryView from './components/VideoGalleryView'
+import { GalleryFloatingPlayer } from './components/GalleryFloatingPlayer'
 import SettingsView from './components/SettingsView'
 import DebugView from './components/DebugView'
 import Header from './components/Header'
@@ -22,7 +23,9 @@ import {
   useScrapeStore,
   jobsForPersistence,
   scrapePersistenceReady,
+  persistScrapeJobsNow,
 } from './stores/scrapeStore'
+import { useDashboardTrackerStore } from './stores/dashboardTrackerStore'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 
 type View = 'dashboard' | 'scrape' | 'jobs' | 'results' | 'gallery' | 'settings' | 'debug'
@@ -47,6 +50,16 @@ const App: React.FC = () => {
     hydrateThemeFromStore()
     hydrateUiFontSizeFromStore()
     hydrateScrapeJobsFromStore()
+    void useDashboardTrackerStore.getState().hydrate()
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.electronAPI?.onDashboardTrackersUpdated) {
+      return
+    }
+    return window.electronAPI.onDashboardTrackersUpdated((payload) => {
+      useDashboardTrackerStore.getState().replaceFromMain(payload)
+    })
   }, [])
 
   useEffect(() => {
@@ -62,12 +75,22 @@ const App: React.FC = () => {
       window.clearTimeout(t)
       t = window.setTimeout(() => {
         void api.storeSet('scrapeJobs', jobsForPersistence(s.jobs))
-      }, 400)
+      }, 150)
     })
     return () => {
       window.clearTimeout(t)
       unsub()
     }
+  }, [])
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        persistScrapeJobsNow()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
   }, [])
 
   useEffect(() => {
@@ -127,7 +150,7 @@ const App: React.FC = () => {
               },
           success: {
             iconTheme: {
-              primary: '#10b981',
+              primary: '#f59e0b',
               secondary: '#fff',
             },
           },
@@ -160,6 +183,7 @@ const App: React.FC = () => {
           </AnimatePresence>
         </main>
         
+        <GalleryFloatingPlayer currentView={currentView} />
         <ServerStatusBar isRunning={isServerRunning} />
       </div>
     </div>

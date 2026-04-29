@@ -1,7 +1,7 @@
 """WebSocket connection manager for real-time progress updates (not the `websockets` PyPI package)."""
 
 import logging
-from typing import Dict, Set
+from typing import Any, Dict, Optional, Set
 from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
@@ -67,19 +67,34 @@ class ConnectionManager:
         for websocket in disconnected:
             self.disconnect(websocket, job_id)
 
-    async def send_log(self, job_id: str, level: str, message: str) -> None:
-        """Send log message to all connections for a job."""
+    async def send_log(
+        self,
+        job_id: str,
+        level: str,
+        message: str,
+        *,
+        step: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """Send log message to all connections for a job.
+
+        Optional ``step`` (e.g. ``{"id": "transcript", "phase": "running|done|error"}``) lets
+        clients show one row per scrape phase with spinner / check / error affordances.
+        """
         if job_id not in self._connections:
             return
+
+        log_payload: Dict[str, Any] = {
+            "level": level,
+            "message": message,
+            "timestamp": self._get_timestamp(),
+        }
+        if step is not None:
+            log_payload["step"] = step
 
         data = {
             "type": "log",
             "job_id": job_id,
-            "log": {
-                "level": level,
-                "message": message,
-                "timestamp": self._get_timestamp(),
-            },
+            "log": log_payload,
         }
 
         disconnected = []

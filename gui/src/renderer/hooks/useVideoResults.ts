@@ -71,30 +71,95 @@ function createBaseResult(job: ScrapeJob): VideoResult {
   }
 }
 
+/** Same shape as main-process discover; keeps Gallery/Results full after job history is cleared. */
+function createBaseResultFromDiscovery(d: {
+  outputDir: string
+  videoId: string
+  url: string
+  completedAt: string
+}): VideoResult {
+  const dir = d.outputDir
+  const vidRaw = (d.videoId && d.videoId.length > 0 ? d.videoId : outputLeafName(dir)) || ''
+  const short = vidRaw.replace(/[^a-zA-Z0-9_-]/g, '').slice(-12) || 'job'
+  const id = `discover-${short}-${dir.slice(-12)}`
+  return {
+    id,
+    videoId: vidRaw,
+    title: `Video ${vidRaw || id}`,
+    channelTitle: 'Unknown',
+    url: d.url,
+    outputDir: dir,
+    scrapedAt: d.completedAt || '',
+    hasVideo: true,
+    hasComments: true,
+    hasTranscript: true,
+    hasThumbnails: true,
+    hasDownload: true,
+    thumbnailSources: canonicalThumbnailSources(vidRaw),
+  }
+}
+
+function outputDirKey(dir: string): string {
+  return dir.replace(/[\\/]+$/, '')
+}
+
 export function useVideoResults(jobs: ScrapeJob[]): VideoResult[] {
-  const baseResults = useMemo(
-    () => jobs.filter((job) => job.status === 'completed' && job.outputDir).map(createBaseResult),
+  const fromCompletedJobs = useMemo(
+    () =>
+      jobs
+        .filter((job) => job.status === 'completed' && job.outputDir)
+        .map(createBaseResult),
     [jobs]
   )
   const [results, setResults] = useState<VideoResult[]>([])
 
   useEffect(() => {
-    if (!baseResults.length) {
-      setResults([])
-      return
-    }
-
-    if (!window.electronAPI) {
-      setResults(baseResults)
-      return
-    }
-
     let cancelled = false
 
     void (async () => {
+      const byDir = new Map<string, VideoResult>()
+      for (const r of fromCompletedJobs) {
+        byDir.set(outputDirKey(r.outputDir), r)
+      }
+
+      if (window.electronAPI?.discoverScrapeOutputs) {
+        try {
+          const discovered = (await window.electronAPI.discoverScrapeOutputs()) as Array<{
+            outputDir: string
+            videoId: string
+            url: string
+            completedAt: string
+          }>
+          for (const row of discovered) {
+            const key = outputDirKey(row.outputDir)
+            if (!key || byDir.has(key)) {
+              continue
+            }
+            byDir.set(key, createBaseResultFromDiscovery(row))
+          }
+        } catch {
+          // Non-fatal: fall back to job-derived rows only
+        }
+      }
+
+      const baseList = Array.from(byDir.values())
+      if (!baseList.length) {
+        if (!cancelled) {
+          setResults([])
+        }
+        return
+      }
+
+      if (!window.electronAPI) {
+        if (!cancelled) {
+          setResults(dedupeVideoResults(baseList))
+        }
+        return
+      }
+
       const next: VideoResult[] = []
 
-      for (const result of baseResults) {
+      for (const result of baseList) {
         if (cancelled) {
           return
         }
@@ -120,7 +185,7 @@ export function useVideoResults(jobs: ScrapeJob[]): VideoResult[] {
             )
           }
         } catch {
-          // Keep the persisted job metadata and canonical thumbnail fallbacks.
+          // Keep row metadata and canonical thumbnail fallbacks
         }
 
         thumbnailSources.push(...result.thumbnailSources)
@@ -142,7 +207,7 @@ export function useVideoResults(jobs: ScrapeJob[]): VideoResult[] {
     return () => {
       cancelled = true
     }
-  }, [baseResults])
+  }, [fromCompletedJobs])
 
   return results
 }

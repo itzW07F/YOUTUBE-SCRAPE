@@ -55,8 +55,9 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
-    if (!url.trim()) {
-      toast.error('Please enter a YouTube URL')
+    const normalized = normalizeYoutubeInput(url)
+    if (!normalized) {
+      toast.error('Please enter a valid YouTube URL or video ID')
       return
     }
 
@@ -73,7 +74,7 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          url: url.trim(),
+          url: normalized,
           include_video: scrapeOptions.includeVideo,
           include_comments: scrapeOptions.includeComments,
           include_transcript: scrapeOptions.includeTranscript,
@@ -97,7 +98,7 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
       // Add job to store
       addJob({
         id: data.job_id,
-        url: url.trim(),
+        url: normalized,
         status: 'running',
         progress: 0,
         type: operations.length === 1 ? operations[0] : 'all',
@@ -142,7 +143,7 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
           </div>
           <div>
             <h2 className="text-2xl font-display font-bold text-white">New Scrape</h2>
-            <p className="text-space-400">Enter a YouTube URL to begin extraction</p>
+            <p className="text-space-400">Enter a YouTube URL or video ID to begin extraction</p>
           </div>
         </div>
 
@@ -150,23 +151,26 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
           {/* URL Input */}
           <div>
             <label className="block text-sm font-medium text-space-200 mb-2">
-              YouTube URL
+              YouTube URL or video ID
             </label>
             <div className="relative">
               <Youtube className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-space-400" />
               <input
-                type="url"
+                type="text"
+                inputMode="url"
+                autoComplete="off"
+                spellCheck={false}
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://www.youtube.com/watch?v=..."
-                className="futuristic-input w-full pl-12 pr-4 py-4 text-lg"
+                placeholder="https://www.youtube.com/watch?v=… or dQw4w9WgXcQ"
+                className="futuristic-input w-full !pl-14 pr-4 py-4 text-lg"
                 disabled={isSubmitting}
               />
             </div>
-            {url && !isValidYoutubeUrl(url) && (
+            {url && !isValidYoutubeInput(url) && (
               <p className="mt-2 text-sm text-rose-400 flex items-center gap-1">
                 <AlertCircle className="w-4 h-4" />
-                Please enter a valid YouTube URL
+                Please enter a valid YouTube URL or video ID
               </p>
             )}
           </div>
@@ -290,10 +294,10 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
           <div className="pt-4">
             <button
               type="submit"
-              disabled={isSubmitting || !url || !isValidYoutubeUrl(url) || !isServerRunning}
+              disabled={isSubmitting || !url || !isValidYoutubeInput(url) || !isServerRunning}
               className={`
                 w-full py-4 rounded-xl font-semibold text-lg flex items-center justify-center gap-2
-                ${isSubmitting || !url || !isValidYoutubeUrl(url) || !isServerRunning
+                ${isSubmitting || !url || !isValidYoutubeInput(url) || !isServerRunning
                   ? 'bg-space-700 text-space-400 cursor-not-allowed'
                   : 'futuristic-btn futuristic-btn-primary'
                 }
@@ -324,14 +328,60 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
   )
 }
 
-function isValidYoutubeUrl(url: string): boolean {
+/** YouTube video IDs are 11 characters from [A-Za-z0-9_-]. */
+const YOUTUBE_VIDEO_ID = /^[a-zA-Z0-9_-]{11}$/
+
+/**
+ * Browsers often copy host-only paths (no scheme). Prepend https:// for known YouTube hosts
+ * without treating bare 11-char video IDs as URLs.
+ */
+function withHttpsSchemeIfNeeded(trimmed: string): string {
+  if (!trimmed || /^https?:\/\//i.test(trimmed)) {
+    return trimmed
+  }
+  if (YOUTUBE_VIDEO_ID.test(trimmed)) {
+    return trimmed
+  }
+  const lower = trimmed.toLowerCase()
+  if (
+    lower.startsWith('www.') ||
+    lower.includes('youtube.com') ||
+    lower.includes('youtu.be')
+  ) {
+    return `https://${trimmed}`
+  }
+  return trimmed
+}
+
+function isValidYoutubeUrl(s: string): boolean {
+  const trimmed = withHttpsSchemeIfNeeded(s.trim())
   const patterns = [
     /^https?:\/\/(www\.)?youtube\.com\/watch\?v=[\w-]+/,
     /^https?:\/\/youtu\.be\/[\w-]+/,
     /^https?:\/\/(www\.)?youtube\.com\/shorts\/[\w-]+/,
     /^https?:\/\/(www\.)?youtube\.com\/live\/[\w-]+/,
   ]
-  return patterns.some((pattern) => pattern.test(url))
+  return patterns.some((pattern) => pattern.test(trimmed))
+}
+
+function isValidYoutubeInput(s: string): boolean {
+  const t = s.trim()
+  return isValidYoutubeUrl(t) || YOUTUBE_VIDEO_ID.test(t)
+}
+
+/** Returns a canonical watch URL, or null if the input is not a supported URL or bare video ID. */
+function normalizeYoutubeInput(s: string): string | null {
+  const t = s.trim()
+  if (!t) {
+    return null
+  }
+  if (YOUTUBE_VIDEO_ID.test(t)) {
+    return `https://www.youtube.com/watch?v=${t}`
+  }
+  if (!isValidYoutubeUrl(t)) {
+    return null
+  }
+  return withHttpsSchemeIfNeeded(t)
 }
 
 export default ScrapeView

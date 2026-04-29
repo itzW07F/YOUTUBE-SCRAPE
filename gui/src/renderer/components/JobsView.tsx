@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Play,
@@ -11,12 +11,24 @@ import {
   Terminal,
   ChevronDown,
   ChevronUp,
+  RefreshCw,
+  Trash2,
+  Loader2,
+  Check,
+  XCircle,
 } from 'lucide-react'
-import { useScrapeStore, ScrapeJob } from '../stores/scrapeStore'
+import {
+  useScrapeStore,
+  ScrapeJob,
+  hydrateScrapeJobsFromStore,
+  parseJobWarnings,
+  LogEntry,
+} from '../stores/scrapeStore'
 import { useAppStore } from '../stores/appStore'
 
 const JobsView: React.FC = () => {
-  const { jobs, activeJobId, setActiveJob, removeJob, updateJob, addJobLog } = useScrapeStore()
+  const { jobs, activeJobId, setActiveJob, removeJob, updateJob, addJobLog, clearFinishedJobs } =
+    useScrapeStore()
   const { serverUrl, isServerRunning } = useAppStore()
   const [expandedJob, setExpandedJob] = useState<string | null>(null)
   const [websockets, setWebsockets] = useState<Map<string, WebSocket>>(new Map())
@@ -31,26 +43,49 @@ const JobsView: React.FC = () => {
         
         ws.onmessage = (event) => {
           const data = JSON.parse(event.data)
-          
+
           if (data.progress !== undefined) {
             updateJob(job.id, { progress: data.progress })
           }
-          
+
           if (data.status) {
-            const details = data.details || {}
-            updateJob(job.id, { 
+            const details = (data.details && typeof data.details === 'object' ? data.details : {}) as Record<
+              string,
+              unknown
+            >
+            const patch: Partial<ScrapeJob> = {
               status: data.status,
-              completedAt: data.status === 'completed' ? new Date().toISOString() : undefined,
-              outputDir: typeof details.output_dir === 'string' ? details.output_dir : job.outputDir,
+              outputDir:
+                typeof details.output_dir === 'string' ? details.output_dir : job.outputDir,
               error: typeof details.error === 'string' ? details.error : job.error,
-            })
+            }
+            if (data.status === 'completed') {
+              patch.completedAt = new Date().toISOString()
+              patch.warnings = parseJobWarnings(details.warnings)
+            }
+            updateJob(job.id, patch)
           }
-          
+
           if (data.log) {
+            const lg = data.log as Record<string, unknown>
+            const stepRaw = lg.step
+            let step: LogEntry['step'] | undefined
+            if (stepRaw && typeof stepRaw === 'object') {
+              const ps = stepRaw as Record<string, unknown>
+              const id = ps.id
+              const phase = ps.phase
+              if (
+                typeof id === 'string' &&
+                (phase === 'running' || phase === 'done' || phase === 'error')
+              ) {
+                step = { id, phase }
+              }
+            }
             addJobLog(job.id, {
-              level: data.log.level,
-              message: data.log.message,
-              timestamp: data.log.timestamp || new Date().toISOString()
+              level: lg.level as LogEntry['level'],
+              message: String(lg.message ?? ''),
+              timestamp: (typeof lg.timestamp === 'string' ? lg.timestamp : null) || new Date().toISOString(),
+              step,
             })
           }
         }
@@ -109,14 +144,113 @@ const JobsView: React.FC = () => {
     return dateB - dateA
   })
 
+  const handleRefreshJobs = () => {
+    hydrateScrapeJobsFromStore({ mergeSession: true })
+  }
+
+  const hasFinishedJobs = jobs.some(
+    (j) => j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled'
+  )
+
+  const handleClearFinishedJobs = () => {
+    clearFinishedJobs()
+    const remainingIds = new Set(useScrapeStore.getState().jobs.map((j) => j.id))
+    setExpandedJob((id) => (id && remainingIds.has(id) ? id : null))
+  }
+
+  /** Stable key so we only re-fetch when jobs missing titles change (avoids IPC spam). */
+  const jobsPendingTitleKey = useMemo(() => {
+    return jobs
+      .filter((j) => Boolean(j.outputDir) && !j.videoTitle)
+      .map((j) => `${j.id}:${j.outputDir}`)
+      .sort()
+      .join('|')
+  }, [jobs])
+
+  useEffect(() => {
+    if (!jobsPendingTitleKey || !window.electronAPI?.readOutputVideoMeta) {
+      return
+    }
+    const snapshot = useScrapeStore.getState().jobs
+    let cancelled = false
+    const timers: ReturnType<typeof setTimeout>[] = []
+    const byDir = new Map<string, string[]>()
+    for (const job of snapshot) {
+      if (!job.outputDir || job.videoTitle) {
+        continue
+      }
+      const ids = byDir.get(job.outputDir) ?? []
+      ids.push(job.id)
+      byDir.set(job.outputDir, ids)
+    }
+
+    void Promise.all(
+      [...byDir.entries()].map(async ([dir, ids]) => {
+        const apply = (title: string | null | undefined) => {
+          const t = title?.trim()
+          if (!t || cancelled) {
+            return
+          }
+          ids.forEach((jobId) => updateJob(jobId, { videoTitle: t }))
+        }
+        try {
+          const meta = (await window.electronAPI.readOutputVideoMeta(dir)) as {
+            title: string | null
+          } | null
+          apply(meta?.title ?? null)
+          if (!meta?.title?.trim() && !cancelled) {
+            timers.push(
+              setTimeout(async () => {
+                try {
+                  const retry = (await window.electronAPI.readOutputVideoMeta(dir)) as {
+                    title: string | null
+                  } | null
+                  apply(retry?.title ?? null)
+                } catch {
+                  /* ignore */
+                }
+              }, 750)
+            )
+          }
+        } catch {
+          /* ignore */
+        }
+      })
+    )
+
+    return () => {
+      cancelled = true
+      timers.forEach(clearTimeout)
+    }
+  }, [jobsPendingTitleKey, updateJob])
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col gap-4 mb-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-display font-bold text-white">Job Monitor</h2>
+          <h2 className="text-2xl font-display font-bold text-white">Scrape Jobs</h2>
           <p className="text-space-400">Track and manage your scraping jobs</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={handleRefreshJobs}
+            className="futuristic-btn flex items-center gap-2 border border-white/10"
+            title="Reload jobs from storage and scan output folders"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </button>
+          <button
+            type="button"
+            onClick={handleClearFinishedJobs}
+            disabled={!hasFinishedJobs}
+            className="futuristic-btn flex items-center gap-2 border border-rose-500/30 text-rose-200 hover:bg-rose-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+            title="Remove completed, failed, and cancelled jobs from the list (running and pending stay)"
+          >
+            <Trash2 className="w-4 h-4" />
+            Clear
+          </button>
           <span className="px-3 py-1 rounded-full bg-neon-blue/10 text-neon-blue text-sm">
             {jobs.filter((j) => j.status === 'running').length} Running
           </span>
@@ -206,7 +340,17 @@ const JobCard: React.FC<JobCardProps> = ({
 
         {/* Job info */}
         <div className="flex-1 min-w-0">
-          <p className="text-white font-medium truncate">{job.url}</p>
+          {job.videoTitle ? (
+            <p className="text-white font-medium truncate" title={job.videoTitle}>
+              {job.videoTitle}
+            </p>
+          ) : null}
+          <p
+            className={`truncate ${job.videoTitle ? 'text-sm text-space-400' : 'text-white font-medium'}`}
+            title={job.url}
+          >
+            {job.url}
+          </p>
           <div className="flex items-center gap-3 text-sm text-space-400">
             <span>{job.type}</span>
             <span>•</span>
@@ -292,20 +436,37 @@ const JobCard: React.FC<JobCardProps> = ({
           >
             <div className="p-4 space-y-4">
               {/* Job details */}
-              <div className="grid grid-cols-3 gap-4 text-sm">
-                <div>
-                  <p className="text-space-400 mb-1">Job ID</p>
-                  <p className="text-white font-mono">{job.id}</p>
+              <div className="flex flex-col gap-4 text-sm sm:flex-row sm:items-start sm:gap-6">
+                <div className="shrink-0 sm:max-w-[11rem]">
+                  <p className="mb-1 text-space-400">Job ID</p>
+                  <p className="font-mono text-white">{job.id}</p>
                 </div>
-                <div>
-                  <p className="text-space-400 mb-1">Output Directory</p>
-                  <p className="text-white font-mono truncate">{job.outputDir || 'N/A'}</p>
+                <div className="min-w-0 flex-1">
+                  <p className="mb-1 text-space-400">Output Directory</p>
+                  <p className="break-all font-mono text-xs leading-relaxed text-white">{job.outputDir || 'N/A'}</p>
                 </div>
-                <div>
-                  <p className="text-space-400 mb-1">Progress</p>
+                <div className="shrink-0 sm:w-24 sm:text-right">
+                  <p className="mb-1 text-space-400">Progress</p>
                   <p className="text-white">{job.progress}%</p>
                 </div>
               </div>
+
+              {job.warnings && job.warnings.length > 0 && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-100/90">
+                  <p className="font-medium text-amber-200/95 mb-1">Some steps could not finish</p>
+                  <ul className="list-disc list-inside space-y-1 text-xs text-amber-100/80">
+                    {job.warnings.map((w) => (
+                      <li key={w.operation}>
+                        <span className="font-medium text-amber-200/90">
+                          {STEP_LABELS[w.operation] ?? w.operation}
+                        </span>
+                        {' — '}
+                        {w.error}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               {/* Logs */}
               {job.logs.length > 0 && (
@@ -315,21 +476,8 @@ const JobCard: React.FC<JobCardProps> = ({
                     Logs ({job.logs.length} entries)
                   </p>
                   <div className="code-block p-3 max-h-48 overflow-auto space-y-1">
-                    {job.logs.map((log, index) => (
-                      <div key={index} className="flex gap-2 text-xs">
-                        <span className="text-space-500">
-                          {new Date(log.timestamp).toLocaleTimeString()}
-                        </span>
-                        <span className={`
-                          font-medium uppercase
-                          ${log.level === 'error' ? 'text-rose-400' :
-                            log.level === 'warn' ? 'text-amber-400' :
-                            log.level === 'info' ? 'text-neon-blue' : 'text-space-400'}
-                        `}>
-                          {log.level}
-                        </span>
-                        <span className="text-space-300">{log.message}</span>
-                      </div>
+                    {buildCollapsedStepLogs(job.logs).map((row, index) => (
+                      <LogLineRow key={`${row.kind}-${index}`} row={row} />
                     ))}
                   </div>
                 </div>
@@ -339,6 +487,73 @@ const JobCard: React.FC<JobCardProps> = ({
         )}
       </AnimatePresence>
     </motion.div>
+  )
+}
+
+const STEP_LABELS: Record<string, string> = {
+  video: 'Video details',
+  thumbnails: 'Thumbnails',
+  transcript: 'Transcript',
+  comments: 'Comments',
+  download: 'Download',
+}
+
+type CollapsedLogRow =
+  | { kind: 'plain'; log: LogEntry }
+  | { kind: 'step'; log: LogEntry }
+
+/** One row per step id — latest websocket message replaces the line (spinner → check/error). */
+function buildCollapsedStepLogs(logs: LogEntry[]): CollapsedLogRow[] {
+  const out: CollapsedLogRow[] = []
+  const indexByStepId = new Map<string, number>()
+  for (const log of logs) {
+    const sid = log.step?.id
+    if (sid) {
+      const existing = indexByStepId.get(sid)
+      if (existing !== undefined) {
+        out[existing] = { kind: 'step', log }
+      } else {
+        indexByStepId.set(sid, out.length)
+        out.push({ kind: 'step', log })
+      }
+    } else {
+      out.push({ kind: 'plain', log })
+    }
+  }
+  return out
+}
+
+const LogLineRow: React.FC<{ row: CollapsedLogRow }> = ({ row }) => {
+  const log = row.log
+  const phase = log.step?.phase
+
+  const endIcon =
+    row.kind === 'step' ? (
+      phase === 'running' ? (
+        <Loader2 className="w-3.5 h-3.5 shrink-0 text-neon-blue animate-spin" aria-hidden />
+      ) : phase === 'done' ? (
+        <Check className="w-3.5 h-3.5 shrink-0 text-emerald-400" aria-hidden />
+      ) : phase === 'error' ? (
+        <XCircle className="w-3.5 h-3.5 shrink-0 text-rose-400" aria-hidden />
+      ) : null
+    ) : null
+
+  return (
+    <div className="flex gap-2 text-xs items-start">
+      <span className="text-space-500 shrink-0">{new Date(log.timestamp).toLocaleTimeString()}</span>
+      <span
+        className={`
+          font-medium uppercase shrink-0
+          ${log.level === 'error' ? 'text-rose-400' :
+            log.level === 'warn' ? 'text-amber-400' :
+            log.level === 'info' ? 'text-neon-blue' : 'text-space-400'}
+        `}
+      >
+        {log.level}
+      </span>
+      <span className="text-space-300 flex-1 min-w-0 break-words">{log.message}</span>
+      {endIcon ? <span className="shrink-0 pt-0.5">{endIcon}</span> : <span className="w-3.5 shrink-0" />}
+    </div>
   )
 }
 

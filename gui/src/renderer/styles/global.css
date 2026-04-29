@@ -82,6 +82,17 @@ html[data-theme="light"] .toast {
   border-color: rgba(0, 0, 0, 0.08) !important;
 }
 
+/* Light theme: darker accent text for contrast on pale backgrounds (neon.* tokens are tuned for dark UI). */
+html[data-theme="light"] .text-neon-blue {
+  color: #a21caf !important;
+}
+html[data-theme="light"] .text-neon-cyan {
+  color: #c2410c !important;
+}
+html[data-theme="light"] .text-neon-green {
+  color: #b45309 !important;
+}
+
 /* Frameless window: title bar is custom; this region is draggable (Electron). */
 .app-region-drag {
   -webkit-app-region: drag;
@@ -111,6 +122,13 @@ html[data-theme="light"] .toast {
   background: rgba(255, 255, 255, 0.2);
 }
 
+html[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+}
+html[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.22);
+}
+
 /* Glass morphism card styles */
 .glass-card {
   background: rgba(255, 255, 255, 0.05);
@@ -136,7 +154,7 @@ html[data-theme="light"] .toast {
   inset: 0;
   border-radius: inherit;
   padding: 1px;
-  background: linear-gradient(135deg, rgba(0, 212, 255, 0.5), rgba(124, 58, 237, 0.5));
+  background: linear-gradient(135deg, rgba(217, 70, 239, 0.55), rgba(124, 58, 237, 0.55));
   -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
@@ -145,7 +163,7 @@ html[data-theme="light"] .toast {
 
 /* Neon text glow */
 .neon-text {
-  text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+  text-shadow: 0 0 10px rgba(217, 70, 239, 0.45);
 }
 
 .neon-text-purple {
@@ -164,8 +182,8 @@ html[data-theme="light"] .toast {
 }
 
 .futuristic-input:focus {
-  border-color: rgba(0, 212, 255, 0.5);
-  box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.1);
+  border-color: rgba(217, 70, 239, 0.55);
+  box-shadow: 0 0 0 2px rgba(217, 70, 239, 0.12);
 }
 
 .futuristic-input::placeholder {
@@ -174,30 +192,30 @@ html[data-theme="light"] .toast {
 
 /* Button styles */
 .futuristic-btn {
-  background: linear-gradient(135deg, rgba(0, 212, 255, 0.1), rgba(124, 58, 237, 0.1));
-  border: 1px solid rgba(0, 212, 255, 0.3);
+  background: linear-gradient(135deg, rgba(217, 70, 239, 0.12), rgba(124, 58, 237, 0.12));
+  border: 1px solid rgba(217, 70, 239, 0.35);
   border-radius: 8px;
   padding: 10px 20px;
-  color: #00d4ff;
+  color: #e879f9;
   font-weight: 500;
   transition: all 0.2s ease;
   cursor: pointer;
 }
 
 .futuristic-btn:hover {
-  background: linear-gradient(135deg, rgba(0, 212, 255, 0.2), rgba(124, 58, 237, 0.2));
-  border-color: rgba(0, 212, 255, 0.5);
-  box-shadow: 0 0 15px rgba(0, 212, 255, 0.3);
+  background: linear-gradient(135deg, rgba(217, 70, 239, 0.22), rgba(124, 58, 237, 0.22));
+  border-color: rgba(217, 70, 239, 0.55);
+  box-shadow: 0 0 15px rgba(217, 70, 239, 0.28);
 }
 
 .futuristic-btn-primary {
-  background: linear-gradient(135deg, #00d4ff, #7c3aed);
+  background: linear-gradient(135deg, #d946ef, #7c3aed);
   border: none;
   color: white;
 }
 
 .futuristic-btn-primary:hover {
-  box-shadow: 0 0 20px rgba(0, 212, 255, 0.5);
+  box-shadow: 0 0 20px rgba(217, 70, 239, 0.45);
 }
 
 /* Loading animation */
@@ -217,7 +235,7 @@ html[data-theme="light"] .toast {
   position: absolute;
   inset: -4px;
   border-radius: inherit;
-  border: 2px solid rgba(0, 212, 255, 0.5);
+  border: 2px solid rgba(217, 70, 239, 0.5);
   animation: pulse-ring 1.5s ease-out infinite;
 }
 
@@ -239,7 +257,7 @@ html[data-theme="light"] .toast {
 }
 
 .progress-bar-fill {
-  background: linear-gradient(90deg, #00d4ff, #7c3aed);
+  background: linear-gradient(90deg, #d946ef, #7c3aed);
   border-radius: 4px;
   transition: width 0.3s ease;
 }

@@ -19,7 +19,7 @@ interface SidebarProps {
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'scrape', label: 'New Scrape', icon: Play },
-  { id: 'jobs', label: 'Jobs', icon: ListTodo },
+  { id: 'jobs', label: 'Scrape Jobs', icon: ListTodo },
   { id: 'results', label: 'Results', icon: FolderOpen },
   { id: 'gallery', label: 'Video Gallery', icon: Clapperboard },
   { id: 'settings', label: 'Settings', icon: Settings },

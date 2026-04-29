@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { FolderOpen, Image, Search, Video } from 'lucide-react'
+import { FolderOpen, Image, Search, Trash2, Video } from 'lucide-react'
 import { useScrapeStore } from '../stores/scrapeStore'
 import { MediaFileInfo, useVideoResults, VideoResult } from '../hooks/useVideoResults'
+import { useGalleryPlayerStore } from '../stores/galleryPlayerStore'
 
-const GalleryThumb: React.FC<{ sources: string[]; className?: string }> = ({ sources, className }) => {
+export const GalleryThumb: React.FC<{ sources: string[]; className?: string }> = ({ sources, className }) => {
   const [sourceIndex, setSourceIndex] = useState(0)
 
   useEffect(() => {
@@ -42,8 +43,17 @@ function sortByScrapedAtDesc(a: VideoResult, b: VideoResult): number {
 }
 
 const VideoGalleryView: React.FC = () => {
-  const { jobs } = useScrapeStore()
+  const { jobs, removeJobsByOutputDir } = useScrapeStore()
   const results = useVideoResults(jobs)
+  const setActiveMedia = useGalleryPlayerStore((s) => s.setActiveMedia)
+  const setPlaybackProgress = useGalleryPlayerStore((s) => s.setPlaybackProgress)
+  const markPlaybackStarted = useGalleryPlayerStore((s) => s.markPlaybackStarted)
+  const clearPlayback = useGalleryPlayerStore((s) => s.clearPlayback)
+  const storedMediaPath = useGalleryPlayerStore((s) => s.mediaPath)
+  const mediaVolume = useGalleryPlayerStore((s) => s.mediaVolume)
+  const setMediaVolume = useGalleryPlayerStore((s) => s.setMediaVolume)
+  const galleryVideoRef = useRef<HTMLVideoElement | null>(null)
+  const galleryAudioRef = useRef<HTMLAudioElement | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedResultId, setSelectedResultId] = useState<string | null>(null)
   const [mediaFiles, setMediaFiles] = useState<MediaFileInfo[]>([])
@@ -99,6 +109,56 @@ const VideoGalleryView: React.FC = () => {
     }
   }, [selectedResult])
 
+  useEffect(() => {
+    if (!selectedResult || !selectedMedia) {
+      return
+    }
+    setActiveMedia(selectedMedia.path, selectedMedia.type, selectedResult.thumbnailSources)
+  }, [
+    selectedResult?.id,
+    selectedMedia?.path,
+    selectedMedia?.type,
+    selectedResult?.thumbnailSources,
+    setActiveMedia,
+  ])
+
+  useEffect(() => {
+    if (selectedMedia?.type === 'video' && galleryVideoRef.current) {
+      galleryVideoRef.current.volume = mediaVolume
+    }
+    if (selectedMedia?.type === 'audio' && galleryAudioRef.current) {
+      galleryAudioRef.current.volume = mediaVolume
+    }
+  }, [selectedMedia?.path, selectedMedia?.type, mediaVolume])
+
+  const handleDeleteResult = async (result: VideoResult) => {
+    if (
+      !confirm(
+        `Delete this scrape folder from disk and remove it from the list?\n\n${result.outputDir}`
+      )
+    ) {
+      return
+    }
+    if (window.electronAPI?.deleteOutputScrapeDir) {
+      const r = await window.electronAPI.deleteOutputScrapeDir(result.outputDir)
+      if (!r.ok) {
+        window.alert(r.error ?? 'Could not delete folder')
+        return
+      }
+    }
+    removeJobsByOutputDir(result.outputDir)
+    if (selectedResultId === result.id) {
+      setSelectedResultId(null)
+    }
+    if (
+      storedMediaPath &&
+      (storedMediaPath.startsWith(result.outputDir.replace(/\\/g, '/')) ||
+        storedMediaPath.includes(result.outputDir))
+    ) {
+      clearPlayback()
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -125,7 +185,7 @@ const VideoGalleryView: React.FC = () => {
           value={searchQuery}
           onChange={(event) => setSearchQuery(event.target.value)}
           placeholder="Search videos by title, channel, or video ID..."
-          className="futuristic-input w-full py-3 pl-12 pr-4"
+          className="futuristic-input w-full !pl-14 py-3 pr-4"
         />
       </div>
 
@@ -145,26 +205,40 @@ const VideoGalleryView: React.FC = () => {
             {filteredResults.map((result) => {
               const isSelected = selectedResult?.id === result.id
               return (
-                <motion.button
+                <motion.div
                   key={`${result.videoId}-${result.outputDir}`}
-                  type="button"
                   layout
-                  onClick={() => setSelectedResultId(result.id)}
-                  className={`glass-card w-full overflow-hidden text-left transition-all ${
-                    isSelected ? 'border-neon-blue/60 bg-neon-blue/10' : 'hover:bg-white/[0.07]'
+                  className={`glass-card w-full overflow-hidden transition-all ${
+                    isSelected ? 'border-neon-blue/60 bg-neon-blue/10' : ''
                   }`}
                 >
-                  <div className="flex gap-3 p-3">
-                    <div className="h-20 w-32 flex-shrink-0 overflow-hidden rounded-lg bg-space-800">
-                      <GalleryThumb sources={result.thumbnailSources} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <h3 className="truncate font-medium text-white">{result.title}</h3>
-                      <p className="truncate text-sm text-space-400">{result.channelTitle}</p>
-                      <p className="mt-2 text-xs text-space-500">{result.videoId}</p>
-                    </div>
+                  <div className="flex gap-1 p-2 sm:gap-2 sm:p-3">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedResultId(result.id)}
+                      className={`flex min-w-0 flex-1 gap-3 rounded-lg p-1 text-left transition-colors ${
+                        isSelected ? '' : 'hover:bg-white/[0.04]'
+                      }`}
+                    >
+                      <div className="h-20 w-32 flex-shrink-0 overflow-hidden rounded-lg bg-space-800">
+                        <GalleryThumb sources={result.thumbnailSources} />
+                      </div>
+                      <div className="min-w-0 flex-1 py-0.5">
+                        <h3 className="truncate font-medium text-white">{result.title}</h3>
+                        <p className="truncate text-sm text-space-400">{result.channelTitle}</p>
+                        <p className="mt-2 text-xs text-space-500">{result.videoId}</p>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteResult(result)}
+                      className="flex h-10 w-10 flex-shrink-0 items-center justify-center self-center rounded-lg text-space-400 transition-colors hover:bg-rose-500/10 hover:text-rose-400 sm:self-stretch sm:h-auto sm:w-11"
+                      title="Delete scrape folder"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
                   </div>
-                </motion.button>
+                </motion.div>
               )
             })}
           </div>
@@ -175,11 +249,38 @@ const VideoGalleryView: React.FC = () => {
                 {selectedResult && selectedMedia?.type === 'video' && window.electronAPI ? (
                   <video
                     key={selectedMedia.path}
+                    ref={galleryVideoRef}
                     className="h-full w-full"
                     controls
                     playsInline
                     preload="metadata"
                     src={window.electronAPI.getAppMediaUrl(selectedMedia.path)}
+                    onVolumeChange={(e) => setMediaVolume(e.currentTarget.volume)}
+                    onTimeUpdate={(e) => {
+                      const v = e.currentTarget
+                      setPlaybackProgress(v.currentTime, !v.paused && !v.ended)
+                    }}
+                    onPlay={(e) => {
+                      markPlaybackStarted()
+                      const v = e.currentTarget
+                      setPlaybackProgress(v.currentTime, true)
+                    }}
+                    onPause={(e) => {
+                      const v = e.currentTarget
+                      setPlaybackProgress(v.currentTime, false)
+                    }}
+                    onLoadedMetadata={(e) => {
+                      const v = e.currentTarget
+                      const st = useGalleryPlayerStore.getState()
+                      v.volume = st.mediaVolume
+                      const { resumeSeconds: t, resumeShouldPlay: play } = st
+                      if (t > 0.05 && (Number.isFinite(v.duration) ? t < v.duration : true)) {
+                        v.currentTime = t
+                      }
+                      if (play) {
+                        void v.play().catch(() => {})
+                      }
+                    }}
                   />
                 ) : selectedResult && selectedMedia?.type === 'audio' && window.electronAPI ? (
                   <div className="flex h-full w-full flex-col items-center justify-center gap-4 p-8">
@@ -188,10 +289,37 @@ const VideoGalleryView: React.FC = () => {
                     </div>
                     <audio
                       key={selectedMedia.path}
+                      ref={galleryAudioRef}
                       className="w-full max-w-2xl"
                       controls
                       preload="metadata"
                       src={window.electronAPI.getAppMediaUrl(selectedMedia.path)}
+                      onVolumeChange={(e) => setMediaVolume(e.currentTarget.volume)}
+                      onTimeUpdate={(e) => {
+                        const a = e.currentTarget
+                        setPlaybackProgress(a.currentTime, !a.paused && !a.ended)
+                      }}
+                      onPlay={(e) => {
+                        markPlaybackStarted()
+                        const a = e.currentTarget
+                        setPlaybackProgress(a.currentTime, true)
+                      }}
+                      onPause={(e) => {
+                        const a = e.currentTarget
+                        setPlaybackProgress(a.currentTime, false)
+                      }}
+                      onLoadedMetadata={(e) => {
+                        const a = e.currentTarget
+                        const st = useGalleryPlayerStore.getState()
+                        a.volume = st.mediaVolume
+                        const { resumeSeconds: t, resumeShouldPlay: play } = st
+                        if (t > 0.05 && (Number.isFinite(a.duration) ? t < a.duration : true)) {
+                          a.currentTime = t
+                        }
+                        if (play) {
+                          void a.play().catch(() => {})
+                        }
+                      }}
                     />
                   </div>
                 ) : selectedResult ? (

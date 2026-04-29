@@ -1,49 +1,72 @@
-import React, { useState, useEffect } from 'react'
+import React from 'react'
 import { motion } from 'framer-motion'
 import {
   Play,
   Clock,
   FolderOpen,
-  CheckCircle,
   Youtube,
   FileText,
   Image,
   Download,
+  Layers,
   ArrowRight,
   Zap,
-  TrendingUp,
+  MessageSquare,
+  HardDrive,
 } from 'lucide-react'
 import { useScrapeStore } from '../stores/scrapeStore'
+import { useDashboardTrackerStore } from '../stores/dashboardTrackerStore'
 
 interface DashboardProps {
   onNavigate: (view: 'scrape' | 'jobs' | 'results') => void
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
-  const { jobs } = useScrapeStore()
-  const [stats, setStats] = useState({
-    totalJobs: 0,
-    completedJobs: 0,
-    pendingJobs: 0,
-    failedJobs: 0,
-  })
+function formatStorageBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return '0 B'
+  }
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'] as const
+  let v = bytes
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i += 1
+  }
+  const decimals = i === 0 ? 0 : i === 1 ? 0 : v >= 100 ? 0 : 1
+  return `${v.toFixed(decimals)} ${units[i]}`
+}
 
-  useEffect(() => {
-    setStats({
-      totalJobs: jobs.length,
-      completedJobs: jobs.filter((j) => j.status === 'completed').length,
-      pendingJobs: jobs.filter((j) => j.status === 'pending' || j.status === 'running').length,
-      failedJobs: jobs.filter((j) => j.status === 'failed').length,
-    })
-  }, [jobs])
+const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
+  const { jobs, applyScrapePreset } = useScrapeStore()
+  const { scrapesStarted, commentsScraped, totalStorageBytes } = useDashboardTrackerStore()
 
   const recentJobs = jobs.slice(0, 5)
 
   const statCards = [
-    { label: 'Total Scrapes', value: stats.totalJobs, icon: Zap, color: 'neon-blue' },
-    { label: 'Completed', value: stats.completedJobs, icon: CheckCircle, color: 'neon-green' },
-    { label: 'Pending', value: stats.pendingJobs, icon: Clock, color: 'amber-500' },
-    { label: 'Failed', value: stats.failedJobs, icon: TrendingUp, color: 'rose-500' },
+    {
+      label: 'Total Scrapes',
+      display: String(scrapesStarted),
+      hint: 'All-time starts',
+      icon: Zap,
+      iconWrapClass: 'bg-neon-blue/10',
+      iconClass: 'text-neon-blue',
+    },
+    {
+      label: 'Comments Scraped',
+      display: String(commentsScraped),
+      hint: 'All-time comment records',
+      icon: MessageSquare,
+      iconWrapClass: 'bg-neon-green/10',
+      iconClass: 'text-neon-green',
+    },
+    {
+      label: 'Storage Used',
+      display: formatStorageBytes(totalStorageBytes),
+      hint: 'Configured output folders',
+      icon: HardDrive,
+      iconWrapClass: 'bg-neon-purple/10',
+      iconClass: 'text-neon-purple',
+    },
   ]
 
   return (
@@ -86,8 +109,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         </div>
       </motion.div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-4 gap-4">
+      {/* Stats — persist in userData/dashboard-trackers.json; storage rescanned from disk */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         {statCards.map((stat, index) => {
           const Icon = stat.icon
           return (
@@ -98,11 +121,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
               transition={{ delay: index * 0.1 }}
               className="glass-card p-5 hover:bg-white/[0.07] transition-colors"
             >
-              <div className={`w-10 h-10 rounded-xl bg-${stat.color}/10 flex items-center justify-center mb-3`}>
-                <Icon className={`w-5 h-5 text-${stat.color}`} />
+              <div className={`w-10 h-10 rounded-xl ${stat.iconWrapClass} flex items-center justify-center mb-3`}>
+                <Icon className={`w-5 h-5 ${stat.iconClass}`} />
               </div>
-              <p className="text-2xl font-bold text-white">{stat.value}</p>
+              <p className="text-2xl font-bold text-white tabular-nums">{stat.display}</p>
               <p className="text-sm text-space-400">{stat.label}</p>
+              <p className="text-xs text-space-500 mt-1">{stat.hint}</p>
             </motion.div>
           )
         })}
@@ -117,11 +141,53 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
           className="glass-card p-5"
         >
           <h3 className="font-semibold text-white mb-4">Quick Actions</h3>
-          <div className="grid grid-cols-2 gap-3">
-            <QuickAction icon={Youtube} label="Scrape Video" onClick={() => onNavigate('scrape')} />
-            <QuickAction icon={FileText} label="Comments" onClick={() => onNavigate('scrape')} />
-            <QuickAction icon={Image} label="Thumbnails" onClick={() => onNavigate('scrape')} />
-            <QuickAction icon={Download} label="Download" onClick={() => onNavigate('scrape')} />
+          <div className="flex flex-col gap-3">
+            <div className="flex justify-center">
+              <div className="min-w-0 w-[calc((100%-0.75rem)/2)]">
+                <QuickAction
+                  icon={Layers}
+                  label="Scrape All Data"
+                  onClick={() => {
+                    applyScrapePreset('all')
+                    onNavigate('scrape')
+                  }}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <QuickAction
+                icon={Youtube}
+                label="Scrape Video MetaData"
+                onClick={() => {
+                  applyScrapePreset('video')
+                  onNavigate('scrape')
+                }}
+              />
+              <QuickAction
+                icon={FileText}
+                label="Scrape Comments/Replies"
+                onClick={() => {
+                  applyScrapePreset('comments')
+                  onNavigate('scrape')
+                }}
+              />
+              <QuickAction
+                icon={Image}
+                label="Scrape Video Thumbnails"
+                onClick={() => {
+                  applyScrapePreset('thumbnails')
+                  onNavigate('scrape')
+                }}
+              />
+              <QuickAction
+                icon={Download}
+                label="Scrape Video/Audio"
+                onClick={() => {
+                  applyScrapePreset('download')
+                  onNavigate('scrape')
+                }}
+              />
+            </div>
           </div>
         </motion.div>
 
@@ -186,8 +252,9 @@ const QuickAction: React.FC<{ icon: React.ElementType; label: string; onClick: (
   onClick,
 }) => (
   <button
+    type="button"
     onClick={onClick}
-    className="flex items-center gap-3 p-3 rounded-lg bg-white/5 hover:bg-white/[0.07] hover:border-neon-blue/30 border border-transparent transition-all group"
+    className="flex w-full items-center gap-3 rounded-lg border border-transparent bg-white/5 p-3 transition-all hover:bg-white/[0.07] hover:border-neon-blue/30 group"
   >
     <div className="w-8 h-8 rounded-lg bg-neon-blue/10 flex items-center justify-center group-hover:bg-neon-blue/20 transition-colors">
       <Icon className="w-4 h-4 text-neon-blue" />

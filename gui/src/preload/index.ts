@@ -49,6 +49,8 @@ const api = {
       completedAt: string
     }>
   > => ipcRenderer.invoke('output:discoverScrapes'),
+  deleteOutputScrapeDir: (outputDir: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('output:deleteScrapeDir', outputDir),
 
   // Window controls
   minimizeWindow: (): Promise<void> =>
@@ -71,6 +73,29 @@ const api = {
     ipcRenderer.invoke('store:set', key, value),
   storeDelete: (key: string): Promise<void> =>
     ipcRenderer.invoke('store:delete', key),
+
+  dashboardTrackersGet: (): Promise<import('../shared/dashboardTrackers').DashboardTrackers> =>
+    ipcRenderer.invoke('dashboardTrackers:get'),
+  dashboardTrackersApplyIncrements: (
+    increments: import('../shared/dashboardTrackers').DashboardTrackerIncrements
+  ): Promise<import('../shared/dashboardTrackers').DashboardTrackers> =>
+    ipcRenderer.invoke('dashboardTrackers:applyIncrements', increments),
+  dashboardTrackersRefreshStorage: (): Promise<import('../shared/dashboardTrackers').DashboardTrackers> =>
+    ipcRenderer.invoke('dashboardTrackers:refreshStorage'),
+  dashboardTrackersSyncAfterJob: (
+    outputDir: string
+  ): Promise<import('../shared/dashboardTrackers').DashboardTrackers> =>
+    ipcRenderer.invoke('dashboardTrackers:syncAfterJob', outputDir),
+  onDashboardTrackersUpdated: (
+    callback: (data: import('../shared/dashboardTrackers').DashboardTrackers) => void
+  ) => {
+    const handler = (_event: unknown, payload: import('../shared/dashboardTrackers').DashboardTrackers) =>
+      callback(payload)
+    ipcRenderer.on('dashboard-trackers:updated', handler)
+    return (): void => {
+      ipcRenderer.removeListener('dashboard-trackers:updated', handler)
+    }
+  },
 }
 
 // Expose the API to the renderer process

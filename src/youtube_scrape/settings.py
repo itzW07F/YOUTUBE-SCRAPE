@@ -63,8 +63,24 @@ class Settings(BaseSettings):
     )
     ffmpeg_repair_dash_fragment: bool = Field(
         default=False,
-        description="After experimental download, if output looks like a DASH fMP4 fragment, try ffmpeg -c copy remux to a sibling .repaired.mp4 (best-effort; may still fail if init is missing).",
+        description=(
+            "After experimental download, if output looks like a DASH fMP4 fragment, try ffmpeg -c copy "
+            "remux to a sibling .repaired.mp4 (best-effort; may still fail if init is missing)."
+        ),
     )
+    fetch_ryd_vote_counts: bool = Field(
+        default=True,
+        description=(
+            "If YouTube omits dislike_count, GET Return YouTube Dislike `/votes` "
+            "(see returnyoutubedislike.com/docs/fetching). "
+            "Adds network hop; toggle off for fully offline scraping."
+        ),
+    )
+    ryd_api_base_url: str = Field(
+        default="https://returnyoutubedislikeapi.com",
+        description="Base URL only; `/votes` is appended by the client.",
+    )
+    ryd_timeout_s: float = Field(default=5.0, ge=0.5, le=120.0, description="Timeout for optional RYD fetch.")
 
     @field_validator("log_level")
     @classmethod

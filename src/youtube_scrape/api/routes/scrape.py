@@ -29,6 +29,22 @@ router = APIRouter()
 
 TranscriptFormat = Literal["txt", "vtt", "json"]
 
+# UI-oriented log lines (WebSocket + optional step metadata for the GUI).
+OPERATION_SCRAPING_LABEL: Dict[str, str] = {
+    "video": "Scraping video details",
+    "thumbnails": "Scraping thumbnails",
+    "transcript": "Scraping transcript",
+    "comments": "Scraping comments",
+    "download": "Downloading media",
+}
+OPERATION_DONE_LABEL: Dict[str, str] = {
+    "video": "Video details saved",
+    "thumbnails": "Thumbnails saved",
+    "transcript": "Transcript saved",
+    "comments": "Comments saved",
+    "download": "Media download finished",
+}
+
 
 class ScrapeVideoRequest(BaseModel):
     """Request model for video scraping."""
@@ -127,6 +143,10 @@ async def run_scrape_job(job_id: str, request: ScrapeVideoRequest) -> None:
 
         await manager.send_status(job_id, "running", {"message": "Initializing..."})
         await manager.send_progress(job_id, 0, "Initializing...")
+        await manager.send_log(job_id, "info", "Starting scrape job...")
+
+        partial_failures: list[dict[str, str]] = []
+        failed_operations: set[str] = set()
 
         for index, operation in enumerate(operations):
             if job.get("cancel_requested"):
@@ -134,76 +154,110 @@ async def run_scrape_job(job_id: str, request: ScrapeVideoRequest) -> None:
                 await manager.send_status(job_id, "cancelled", {"message": "Job cancelled"})
                 return
 
-            await manager.send_log(job_id, "info", f"Starting: {operation}")
-            await send_step_progress(job_id, index, len(operations), f"Starting: {operation}")
+            label = OPERATION_SCRAPING_LABEL.get(operation, f"Scraping: {operation}")
+            await manager.send_log(
+                job_id,
+                "info",
+                label,
+                step={"id": operation, "phase": "running"},
+            )
+            await send_step_progress(job_id, index, len(operations), label)
 
-            if operation == "video":
-                envelope = await ScrapeVideoService(browser=browser, settings=settings).scrape(request.url)
-                results["video"] = envelope.model_dump()
-                (output_dir / "video.json").write_text(envelope.model_dump_json(indent=2), encoding="utf-8")
-            elif operation == "thumbnails":
-                thumbnails_dir = output_dir / "thumbnails"
-                thumbnails_dir.mkdir(exist_ok=True)
-                envelope = await ScrapeThumbnailsService(
-                    browser=browser,
-                    http=http,
-                    files=files,
-                    settings=settings,
-                ).scrape(request.url, out_dir=thumbnails_dir)
-                results["thumbnails"] = envelope.model_dump()
-                (output_dir / "thumbnails.json").write_text(envelope.model_dump_json(indent=2), encoding="utf-8")
-            elif operation == "transcript":
-                fmt: TranscriptFormat = (
-                    cast(TranscriptFormat, request.transcript_format)
-                    if request.transcript_format in {"txt", "vtt", "json"}
-                    else "txt"
-                )
-                envelope = await ScrapeTranscriptService(browser=browser, http=http, settings=settings).scrape(
-                    request.url,
-                    language=None,
-                    fmt=fmt,
-                )
-                results["transcript"] = envelope.model_dump()
-                transcript_path = output_dir / f"transcript.{fmt}"
-                if fmt == "json":
-                    transcript_path.write_text(envelope.model_dump_json(indent=2), encoding="utf-8")
+            try:
+                if operation == "video":
+                    envelope = await ScrapeVideoService(browser=browser, settings=settings).scrape(request.url)
+                    results["video"] = envelope.model_dump()
+                    (output_dir / "video.json").write_text(envelope.model_dump_json(indent=2), encoding="utf-8")
+                elif operation == "thumbnails":
+                    thumbnails_dir = output_dir / "thumbnails"
+                    thumbnails_dir.mkdir(exist_ok=True)
+                    envelope = await ScrapeThumbnailsService(
+                        browser=browser,
+                        http=http,
+                        files=files,
+                        settings=settings,
+                    ).scrape(request.url, out_dir=thumbnails_dir)
+                    results["thumbnails"] = envelope.model_dump()
+                    (output_dir / "thumbnails.json").write_text(envelope.model_dump_json(indent=2), encoding="utf-8")
+                elif operation == "transcript":
+                    fmt: TranscriptFormat = (
+                        cast(TranscriptFormat, request.transcript_format)
+                        if request.transcript_format in {"txt", "vtt", "json"}
+                        else "txt"
+                    )
+                    envelope = await ScrapeTranscriptService(browser=browser, http=http, settings=settings).scrape(
+                        request.url,
+                        language=None,
+                        fmt=fmt,
+                    )
+                    results["transcript"] = envelope.model_dump()
+                    transcript_path = output_dir / f"transcript.{fmt}"
+                    if fmt == "json":
+                        transcript_path.write_text(envelope.model_dump_json(indent=2), encoding="utf-8")
+                    else:
+                        content = envelope.data.get("content") or envelope.data.get("body") or ""
+                        transcript_path.write_text(str(content), encoding="utf-8")
+                elif operation == "comments":
+                    envelope = await ScrapeCommentsService(browser=browser, http=http, settings=settings).scrape(
+                        request.url,
+                        max_comments=request.max_comments,
+                        fetch_all=False,
+                        max_replies_per_thread=3,
+                        include_replies=True,
+                    )
+                    results["comments"] = envelope.model_dump()
+                    (output_dir / "comments.json").write_text(envelope.model_dump_json(indent=2), encoding="utf-8")
+                elif operation == "download":
+                    stream_kind, selection = download_selection_for_quality(request.video_quality)
+                    audio_encoding = "container"
+                    download_dir = output_dir / "download"
+                    download_dir.mkdir(exist_ok=True)
+                    envelope = await DownloadService(settings).download(
+                        request.url,
+                        download_dir / f"{video_id}.mp4",
+                        stream_kind=stream_kind,
+                        audio_encoding=audio_encoding,
+                        selection=selection,
+                        experimental_fallback=False,
+                        name_from_title=False,
+                    )
+                    results["download"] = envelope.model_dump()
                 else:
-                    content = envelope.data.get("content") or envelope.data.get("body") or ""
-                    transcript_path.write_text(str(content), encoding="utf-8")
-            elif operation == "comments":
-                envelope = await ScrapeCommentsService(browser=browser, http=http, settings=settings).scrape(
-                    request.url,
-                    max_comments=request.max_comments,
-                    fetch_all=False,
-                    max_replies_per_thread=3,
-                    include_replies=True,
+                    raise ValueError(f"Unknown operation: {operation}")
+            except Exception as exc:
+                err_text = str(exc)
+                logger.warning("Job %s step %s failed (continuing): %s", job_id, operation, err_text, exc_info=True)
+                failed_operations.add(operation)
+                partial_failures.append({"operation": operation, "error": err_text})
+                await manager.send_log(
+                    job_id,
+                    "warn",
+                    f"{label} — skipped: {err_text}",
+                    step={"id": operation, "phase": "error"},
                 )
-                results["comments"] = envelope.model_dump()
-                (output_dir / "comments.json").write_text(envelope.model_dump_json(indent=2), encoding="utf-8")
-            elif operation == "download":
-                stream_kind, selection = download_selection_for_quality(request.video_quality)
-                audio_encoding = "container"
-                download_dir = output_dir / "download"
-                download_dir.mkdir(exist_ok=True)
-                envelope = await DownloadService(settings).download(
-                    request.url,
-                    download_dir / f"{video_id}.mp4",
-                    stream_kind=stream_kind,
-                    audio_encoding=audio_encoding,
-                    selection=selection,
-                    experimental_fallback=False,
-                    name_from_title=False,
+            else:
+                done_msg = OPERATION_DONE_LABEL.get(operation, f"Finished {operation}")
+                await manager.send_log(
+                    job_id,
+                    "info",
+                    done_msg,
+                    step={"id": operation, "phase": "done"},
                 )
-                results["download"] = envelope.model_dump()
 
-            await manager.send_log(job_id, "info", f"Completed: {operation}")
-            await send_step_progress(job_id, index + 1, len(operations), f"Completed: {operation}")
+            step_progress_msg = (
+                OPERATION_DONE_LABEL.get(operation, "Step complete")
+                if operation not in failed_operations
+                else f"{operation} skipped — continuing"
+            )
+            await send_step_progress(job_id, index + 1, len(operations), step_progress_msg)
 
         summary = {
             "schema_version": settings.output_schema_version,
             "video_id": video_id,
             "output_directory": str(output_dir),
             "operations_run": list(results.keys()),
+            "operations_failed": list(failed_operations),
+            "errors": {item["operation"]: item["error"] for item in partial_failures},
             "results": results,
         }
         (output_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -212,13 +266,25 @@ async def run_scrape_job(job_id: str, request: ScrapeVideoRequest) -> None:
         job["progress"] = 100
         job["completed_at"] = datetime.utcnow().isoformat()
         job["result"] = summary
+        if partial_failures:
+            job["warnings"] = partial_failures
 
-        await manager.send_status(job_id, "completed", {
+        completed_details: dict[str, Any] = {
             "output_dir": str(output_dir),
             "video_id": video_id,
-        })
+        }
+        if partial_failures:
+            completed_details["warnings"] = partial_failures
+            completed_details["partial_failures"] = True
 
-        logger.info(f"Job {job_id} completed successfully")
+        await manager.send_status(job_id, "completed", completed_details)
+
+        logger.info(
+            "Job %s completed (%d ok, %d failed steps)",
+            job_id,
+            len(operations) - len(partial_failures),
+            len(partial_failures),
+        )
 
     except Exception as e:
         logger.error(f"Job {job_id} failed: {e}")

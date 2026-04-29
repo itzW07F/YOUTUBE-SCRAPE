@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from typing import Any
 
 from youtube_scrape.domain.constants import (
@@ -13,6 +14,7 @@ from youtube_scrape.domain.constants import (
     CONTINUATION_ITEM_KEY,
 )
 from youtube_scrape.domain.models import CommentRecord
+from youtube_scrape.domain.time_normalize import parse_published_text_to_utc
 
 _COMMENT_ENTITY_MARKER = "commentEntityPayload"
 _COMMENT_REPLY_RENDERER = "commentReplyRenderer"
@@ -33,6 +35,7 @@ def _parse_comment_renderer(
     *,
     is_reply: bool,
     parent_comment_id: str | None,
+    now_utc: datetime,
 ) -> CommentRecord:
     cid = str(renderer.get("commentId") or "")
     text_runs = renderer.get("contentText", {}).get("runs") or []
@@ -51,6 +54,7 @@ def _parse_comment_renderer(
         author=author,
         author_channel_id=str(author_endpoint) if author_endpoint else None,
         published_text=published,
+        published_at=parse_published_text_to_utc(published, now_utc=now_utc),
         like_count=like_count,
         is_reply=is_reply,
         parent_comment_id=parent_comment_id,
@@ -61,13 +65,15 @@ def extract_threads_from_renderer(
     thread: dict[str, Any],
     *,
     max_replies_per_thread: int | None = None,
+    now_utc: datetime | None = None,
 ) -> list[CommentRecord]:
     """Expand a ``commentThreadRenderer`` into top-level + reply records."""
     out: list[CommentRecord] = []
+    reference_now = now_utc or datetime.now(UTC)
     comment = (thread.get("comment") or {}).get(COMMENT_KEY)
     if not isinstance(comment, dict):
         return out
-    top = _parse_comment_renderer(comment, is_reply=False, parent_comment_id=None)
+    top = _parse_comment_renderer(comment, is_reply=False, parent_comment_id=None, now_utc=reference_now)
     out.append(top)
     replies_obj = thread.get("replies", {}).get(COMMENT_REPLIES_KEY)
     if isinstance(replies_obj, dict):
@@ -76,7 +82,14 @@ def extract_threads_from_renderer(
                 break
             rep = item.get(COMMENT_KEY)
             if isinstance(rep, dict):
-                out.append(_parse_comment_renderer(rep, is_reply=True, parent_comment_id=top.comment_id))
+                out.append(
+                    _parse_comment_renderer(
+                        rep,
+                        is_reply=True,
+                        parent_comment_id=top.comment_id,
+                        now_utc=reference_now,
+                    )
+                )
     return out
 
 
@@ -143,13 +156,21 @@ def extract_comments_from_initial_data(
     data: dict[str, Any],
     *,
     max_replies_per_thread: int | None = None,
+    now_utc: datetime | None = None,
 ) -> list[CommentRecord]:
     """Collect all comments reachable without continuations."""
     records: list[CommentRecord] = []
+    reference_now = now_utc or datetime.now(UTC)
     for node in _iter_nested_dicts(data):
         thread = node.get(COMMENT_THREAD_KEY)
         if isinstance(thread, dict):
-            records.extend(extract_threads_from_renderer(thread, max_replies_per_thread=max_replies_per_thread))
+            records.extend(
+                extract_threads_from_renderer(
+                    thread,
+                    max_replies_per_thread=max_replies_per_thread,
+                    now_utc=reference_now,
+                )
+            )
     return records
 
 
@@ -157,6 +178,7 @@ def extract_comments_from_entity_mutations(
     data: dict[str, Any],
     *,
     include_replies: bool = True,
+    now_utc: datetime | None = None,
 ) -> list[CommentRecord]:
     """Collect comments from ``frameworkUpdates.entityBatchUpdate.mutations`` (web client).
 
@@ -173,6 +195,7 @@ def extract_comments_from_entity_mutations(
     if not isinstance(muts, list):
         return []
     out: list[CommentRecord] = []
+    reference_now = now_utc or datetime.now(UTC)
     for mut in muts:
         if not isinstance(mut, dict):
             continue
@@ -219,6 +242,10 @@ def extract_comments_from_entity_mutations(
                 author=author,
                 author_channel_id=ach,
                 published_text=str(published) if published is not None else None,
+                published_at=parse_published_text_to_utc(
+                    str(published) if published is not None else None,
+                    now_utc=reference_now,
+                ),
                 like_count=like_count,
                 is_reply=is_reply,
                 parent_comment_id=parent_id,
@@ -232,13 +259,22 @@ def extract_comment_records_from_response(
     *,
     max_replies_per_thread: int | None,
     include_replies: bool,
+    now_utc: datetime | None = None,
 ) -> list[CommentRecord]:
     """Merge classic renderer comments and entity-mutation comments; dedupe by ``comment_id``."""
     seen: set[str] = set()
     merged: list[CommentRecord] = []
     for group in (
-        extract_comments_from_initial_data(data, max_replies_per_thread=max_replies_per_thread),
-        extract_comments_from_entity_mutations(data, include_replies=include_replies),
+        extract_comments_from_initial_data(
+            data,
+            max_replies_per_thread=max_replies_per_thread,
+            now_utc=now_utc,
+        ),
+        extract_comments_from_entity_mutations(
+            data,
+            include_replies=include_replies,
+            now_utc=now_utc,
+        ),
     ):
         for c in group:
             if not c.comment_id or c.comment_id in seen:

@@ -8,25 +8,26 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        // Futuristic dark theme colors
+        // Dark surfaces 900–700 unchanged; 600–300 are foreground-muted (neutral grays, higher luminance — old blue-violet mid-tones failed contrast on dark BG).
         space: {
           900: '#0a0a0f',
           800: '#12121a',
           700: '#1a1a2e',
-          600: '#252542',
-          500: '#32325a',
-          400: '#4a4a7a',
-          300: '#6a6a9a',
-          200: '#9a9aba',
+          600: '#8f8f9e',
+          500: '#a6a6b4',
+          400: '#c4c4d0',
+          300: '#dcdce6',
+          200: '#e8e8ef',
           100: '#cacada',
           50: '#eaeafa',
         },
+        // Accents avoid cyan/teal/emerald (ambiguous for blue–green deficiency): fuchsia + amber + orange.
         neon: {
-          blue: '#00d4ff',
+          blue: '#d946ef',
           purple: '#7c3aed',
-          cyan: '#22d3ee',
+          cyan: '#fb923c',
           pink: '#f472b6',
-          green: '#10b981',
+          green: '#f59e0b',
         },
         glass: {
           light: 'rgba(255, 255, 255, 0.05)',
@@ -48,8 +49,8 @@ module.exports = {
       },
       keyframes: {
         glow: {
-          '0%': { boxShadow: '0 0 5px rgba(0, 212, 255, 0.3)' },
-          '100%': { boxShadow: '0 0 20px rgba(0, 212, 255, 0.6)' },
+          '0%': { boxShadow: '0 0 5px rgba(217, 70, 239, 0.35)' },
+          '100%': { boxShadow: '0 0 20px rgba(217, 70, 239, 0.65)' },
         },
         slideUp: {
           '0%': { transform: 'translateY(10px)', opacity: '0' },
@@ -64,7 +65,7 @@ module.exports = {
         xs: '2px',
       },
       boxShadow: {
-        'neon-blue': '0 0 10px rgba(0, 212, 255, 0.5), 0 0 20px rgba(0, 212, 255, 0.3)',
+        'neon-blue': '0 0 10px rgba(217, 70, 239, 0.45), 0 0 20px rgba(217, 70, 239, 0.28)',
         'neon-purple': '0 0 10px rgba(124, 58, 237, 0.5), 0 0 20px rgba(124, 58, 237, 0.3)',
         'glass': '0 8px 32px rgba(0, 0, 0, 0.3)',
       },
