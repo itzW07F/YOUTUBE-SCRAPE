@@ -17,8 +17,13 @@ import {
 import { useScrapeStore } from '../stores/scrapeStore'
 import { useDashboardTrackerStore } from '../stores/dashboardTrackerStore'
 
+const RECENT_ACTIVITY_LIMIT = 3
+
 interface DashboardProps {
-  onNavigate: (view: 'scrape' | 'jobs' | 'results') => void
+  onNavigate: (
+    view: 'scrape' | 'jobs' | 'results',
+    options?: { preserveScrapeOptions?: boolean }
+  ) => void
 }
 
 function formatStorageBytes(bytes: number): string {
@@ -40,7 +45,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   const { jobs, applyScrapePreset } = useScrapeStore()
   const { scrapesStarted, commentsScraped, totalStorageBytes } = useDashboardTrackerStore()
 
-  const recentJobs = jobs.slice(0, 5)
+  const recentJobs = jobs.slice(0, RECENT_ACTIVITY_LIMIT)
 
   const statCards = [
     {
@@ -149,7 +154,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                   label="Scrape All Data"
                   onClick={() => {
                     applyScrapePreset('all')
-                    onNavigate('scrape')
+                    onNavigate('scrape', { preserveScrapeOptions: true })
                   }}
                 />
               </div>
@@ -160,7 +165,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 label="Scrape Video MetaData"
                 onClick={() => {
                   applyScrapePreset('video')
-                  onNavigate('scrape')
+                  onNavigate('scrape', { preserveScrapeOptions: true })
                 }}
               />
               <QuickAction
@@ -168,7 +173,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 label="Scrape Comments/Replies"
                 onClick={() => {
                   applyScrapePreset('comments')
-                  onNavigate('scrape')
+                  onNavigate('scrape', { preserveScrapeOptions: true })
                 }}
               />
               <QuickAction
@@ -176,7 +181,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 label="Scrape Video Thumbnails"
                 onClick={() => {
                   applyScrapePreset('thumbnails')
-                  onNavigate('scrape')
+                  onNavigate('scrape', { preserveScrapeOptions: true })
                 }}
               />
               <QuickAction
@@ -184,7 +189,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 label="Scrape Video/Audio"
                 onClick={() => {
                   applyScrapePreset('download')
-                  onNavigate('scrape')
+                  onNavigate('scrape', { preserveScrapeOptions: true })
                 }}
               />
             </div>

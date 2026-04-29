@@ -27,18 +27,42 @@ import {
 import { useAppStore } from '../stores/appStore'
 
 const JobsView: React.FC = () => {
-  const { jobs, activeJobId, setActiveJob, removeJob, updateJob, addJobLog, clearFinishedJobs } =
-    useScrapeStore()
+  const {
+    jobs,
+    activeJobId,
+    pendingAutoExpandJobId,
+    setActiveJob,
+    setPendingAutoExpandJobId,
+    removeJob,
+    updateJob,
+    addJobLog,
+    clearFinishedJobs,
+  } = useScrapeStore()
   const { serverUrl, isServerRunning } = useAppStore()
   const [expandedJob, setExpandedJob] = useState<string | null>(null)
   const [websockets, setWebsockets] = useState<Map<string, WebSocket>>(new Map())
+
+  useEffect(() => {
+    if (!pendingAutoExpandJobId) {
+      return
+    }
+    if (!jobs.some((j) => j.id === pendingAutoExpandJobId)) {
+      return
+    }
+    setExpandedJob(pendingAutoExpandJobId)
+    setPendingAutoExpandJobId(null)
+  }, [pendingAutoExpandJobId, jobs, setPendingAutoExpandJobId])
 
   // Connect to WebSocket for each running job
   useEffect(() => {
     if (!serverUrl || !isServerRunning) return
 
     jobs.forEach((job) => {
-      if (job.status === 'running' && !websockets.has(job.id)) {
+      if (
+        job.status === 'running' &&
+        job.id.startsWith('gallery-metadata-') === false &&
+        !websockets.has(job.id)
+      ) {
         const ws = new WebSocket(`${serverUrl.replace('http', 'ws')}/ws/progress/${job.id}`)
         
         ws.onmessage = (event) => {
@@ -366,15 +390,15 @@ const JobCard: React.FC<JobCardProps> = ({
 
         {/* Progress */}
         {job.status === 'running' && (
-          <div className="w-32">
-            <div className="flex items-center justify-between text-sm mb-1">
+          <div className="w-40 sm:w-48 shrink-0">
+            <div className="flex items-center justify-between text-sm mb-1.5">
               <span className="text-space-400">Progress</span>
-              <span className="text-white">{job.progress}%</span>
+              <span className="text-white tabular-nums">{job.progress}%</span>
             </div>
-            <div className="progress-bar h-2">
+            <div className="progress-bar progress-bar--active h-3.5 md:h-4 rounded-md">
               <div
-                className="progress-bar-fill h-full"
-                style={{ width: `${job.progress}%` }}
+                className="progress-bar-fill progress-bar-fill--striped h-full rounded-md"
+                style={{ width: `${Math.min(100, Math.max(0, job.progress))}%` }}
               />
             </div>
           </div>

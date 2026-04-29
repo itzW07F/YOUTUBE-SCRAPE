@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ScrapeJob } from '../stores/scrapeStore'
 
 export interface MediaFileInfo {
   name: string
   path: string
   type: 'video' | 'audio'
+  sizeBytes: number | null
 }
 
 export interface VideoResult {
@@ -21,6 +22,17 @@ export interface VideoResult {
   hasThumbnails: boolean
   hasDownload: boolean
   thumbnailSources: string[]
+  durationSeconds: number | null
+  /** ISO timestamp from video.json when present. */
+  publishedAt: string | null
+  /** Milliseconds since epoch; 0 = unknown. */
+  publishedAtMs: number
+  viewCount: number | null
+  likeCount: number | null
+  dislikeCount: number | null
+  /** Comment total from ``video.json`` metadata only (not scraped comment file counts). */
+  commentCount: number | null
+  folderSizeBytes: number | null
 }
 
 interface VideoMetaRead {
@@ -30,6 +42,13 @@ interface VideoMetaRead {
   channelTitle: string | null
   thumbnailUrl: string | null
   localThumbPath: string | null
+  durationSeconds: number | null
+  publishedAt: string | null
+  viewCount: number | null
+  likeCount: number | null
+  dislikeCount: number | null
+  commentCount: number | null
+  folderSizeBytes: number | null
 }
 
 function outputLeafName(outputDir?: string): string {
@@ -68,6 +87,14 @@ function createBaseResult(job: ScrapeJob): VideoResult {
     hasThumbnails: operations ? operations.has('thumbnails') : job.type === 'all' || job.type === 'thumbnails',
     hasDownload: operations ? operations.has('download') : job.type === 'all' || job.type === 'download',
     thumbnailSources: canonicalThumbnailSources(videoId),
+    durationSeconds: null,
+    publishedAt: null,
+    publishedAtMs: 0,
+    viewCount: null,
+    likeCount: null,
+    dislikeCount: null,
+    commentCount: null,
+    folderSizeBytes: null,
   }
 }
 
@@ -96,6 +123,14 @@ function createBaseResultFromDiscovery(d: {
     hasThumbnails: true,
     hasDownload: true,
     thumbnailSources: canonicalThumbnailSources(vidRaw),
+    durationSeconds: null,
+    publishedAt: null,
+    publishedAtMs: 0,
+    viewCount: null,
+    likeCount: null,
+    dislikeCount: null,
+    commentCount: null,
+    folderSizeBytes: null,
   }
 }
 
@@ -103,7 +138,31 @@ function outputDirKey(dir: string): string {
   return dir.replace(/[\\/]+$/, '')
 }
 
-export function useVideoResults(jobs: ScrapeJob[]): VideoResult[] {
+function fingerprintVideoResults(list: VideoResult[]): string {
+  return list
+    .map(
+      (r) =>
+        [
+          r.id,
+          r.outputDir,
+          r.videoId,
+          r.title,
+          r.channelTitle,
+          String(r.durationSeconds ?? ''),
+          r.publishedAt ?? '',
+          String(r.publishedAtMs),
+          String(r.viewCount ?? ''),
+          String(r.likeCount ?? ''),
+          String(r.dislikeCount ?? ''),
+          String(r.commentCount ?? ''),
+          String(r.folderSizeBytes ?? ''),
+          r.thumbnailSources.join('\x1c'),
+        ].join('\x1d')
+    )
+    .join('\x1e')
+}
+
+export function useVideoResults(jobs: ScrapeJob[], diskRevision = 0): VideoResult[] {
   const fromCompletedJobs = useMemo(
     () =>
       jobs
@@ -112,6 +171,7 @@ export function useVideoResults(jobs: ScrapeJob[]): VideoResult[] {
     [jobs]
   )
   const [results, setResults] = useState<VideoResult[]>([])
+  const lastFingerprintRef = useRef<string>('')
 
   useEffect(() => {
     let cancelled = false
@@ -145,6 +205,7 @@ export function useVideoResults(jobs: ScrapeJob[]): VideoResult[] {
       const baseList = Array.from(byDir.values())
       if (!baseList.length) {
         if (!cancelled) {
+          lastFingerprintRef.current = ''
           setResults([])
         }
         return
@@ -152,7 +213,12 @@ export function useVideoResults(jobs: ScrapeJob[]): VideoResult[] {
 
       if (!window.electronAPI) {
         if (!cancelled) {
-          setResults(dedupeVideoResults(baseList))
+          const deduped = dedupeVideoResults(baseList)
+          const fp = `${diskRevision}\x1f${fingerprintVideoResults(deduped)}`
+          if (fp !== lastFingerprintRef.current) {
+            lastFingerprintRef.current = fp
+            setResults(deduped)
+          }
         }
         return
       }
@@ -168,9 +234,10 @@ export function useVideoResults(jobs: ScrapeJob[]): VideoResult[] {
         let title = result.title
         let channelTitle = result.channelTitle
         const thumbnailSources: Array<string | null | undefined> = []
+        let meta: VideoMetaRead | null = null
 
         try {
-          const meta = (await window.electronAPI.readOutputVideoMeta(result.outputDir)) as VideoMetaRead | null
+          meta = (await window.electronAPI.readOutputVideoMeta(result.outputDir)) as VideoMetaRead | null
           if (meta) {
             if (!meta.hasArtifacts) {
               continue
@@ -185,6 +252,7 @@ export function useVideoResults(jobs: ScrapeJob[]): VideoResult[] {
             )
           }
         } catch {
+          meta = null
           // Keep row metadata and canonical thumbnail fallbacks
         }
 
@@ -196,18 +264,37 @@ export function useVideoResults(jobs: ScrapeJob[]): VideoResult[] {
           title,
           channelTitle,
           thumbnailSources: uniqueSources(thumbnailSources),
+          durationSeconds: meta?.durationSeconds ?? result.durationSeconds,
+          publishedAt: meta?.publishedAt ?? result.publishedAt,
+          publishedAtMs:
+            meta?.publishedAt && Number.isFinite(Date.parse(meta.publishedAt))
+              ? Date.parse(meta.publishedAt)
+              : result.publishedAtMs,
+          viewCount: meta?.viewCount ?? result.viewCount,
+          likeCount: meta?.likeCount ?? result.likeCount,
+          dislikeCount: meta?.dislikeCount ?? result.dislikeCount,
+          commentCount: meta?.commentCount ?? result.commentCount,
+          folderSizeBytes: meta?.folderSizeBytes ?? result.folderSizeBytes,
         })
       }
 
       if (!cancelled) {
-        setResults(dedupeVideoResults(next))
+        const deduped = dedupeVideoResults(next)
+        // Include diskRevision so gallery re-syncs after metadata refresh even when visible fields match
+        // previous reads (fingerprints omit some fields).
+        const fp = `${diskRevision}\x1f${fingerprintVideoResults(deduped)}`
+        if (fp === lastFingerprintRef.current) {
+          return
+        }
+        lastFingerprintRef.current = fp
+        setResults(deduped)
       }
     })()
 
     return () => {
       cancelled = true
     }
-  }, [fromCompletedJobs])
+  }, [fromCompletedJobs, diskRevision])
 
   return results
 }

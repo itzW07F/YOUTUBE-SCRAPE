@@ -22,6 +22,10 @@ from youtube_scrape.domain.json_extract import (
     extract_yt_initial_player_response,
 )
 from youtube_scrape.domain.ports import BrowserSession
+from youtube_scrape.domain.watch_initial_extract import (
+    DOM_COMMENT_COUNT_SCRATCH_KEY,
+    parse_public_comment_total_from_heading_text,
+)
 from youtube_scrape.exceptions import ExtractionError, NavigationError
 from youtube_scrape.settings import Settings
 
@@ -426,9 +430,15 @@ class CamoufoxBrowserSession(BrowserSession):
 
     async def _post_goto_settle(self, page: Page) -> None:
         """Scroll the watch page so lazy panels (especially comments) hydrate before ``page.content()``."""
-        if self._settings.page_settle_after_load_ms <= 0:
+        timeout_ms = min(
+            max(
+                self._settings.watch_page_comments_hydration_ms,
+                self._settings.page_settle_after_load_ms,
+            ),
+            30_000,
+        )
+        if timeout_ms <= 0:
             return
-        timeout_ms = min(self._settings.page_settle_after_load_ms, 30_000)
         deadline = time.monotonic() + timeout_ms / 1000.0
 
         async def _remaining_s() -> float:
@@ -464,6 +474,24 @@ class CamoufoxBrowserSession(BrowserSession):
         tail = min(1.8, await _remaining_s())
         if tail > 0:
             await asyncio.sleep(tail)
+
+    async def _dom_watch_public_comment_count(self, page: Page) -> int | None:
+        """Read total comment count from hydrated ``ytd-comments-header-renderer`` (not in static ytInitialData)."""
+        try:
+            raw = await page.evaluate(
+                """() => {
+                  const h = document.querySelector('ytd-comments-header-renderer h2#count');
+                  if (!h) return null;
+                  const t = (h.innerText || '').replace(/\\s+/g, ' ').trim();
+                  return t || null;
+                }"""
+            )
+        except Exception:
+            log.debug("dom_comment_count_eval_failed", exc_info=True)
+            return None
+        if not isinstance(raw, str):
+            return None
+        return parse_public_comment_total_from_heading_text(raw)
 
     def _launch_kwargs(self) -> dict[str, Any]:
         kwargs: dict[str, Any] = {"headless": self._settings.headless}
@@ -2071,7 +2099,25 @@ class CamoufoxBrowserSession(BrowserSession):
                         total_budget_s=self._settings.youtube_preroll_ad_skip_budget_s,
                     )
                     await self._post_goto_settle(page)
+                    dom_comment_total = await self._dom_watch_public_comment_count(page)
                     html = await page.content()
+                    try:
+                        initial = extract_yt_initial_data(html)
+                    except ExtractionError:
+                        initial = {}
+                    if dom_comment_total is not None:
+                        initial = dict(initial) if isinstance(initial, dict) else {}
+                        initial[DOM_COMMENT_COUNT_SCRATCH_KEY] = dom_comment_total
+                    if not initial:
+                        try:
+                            injected = await page.evaluate(
+                                "() => (typeof ytInitialData !== 'undefined' && ytInitialData"
+                                " ? ytInitialData : null)"
+                            )
+                            if isinstance(injected, dict) and injected:
+                                initial = injected
+                        except Exception:
+                            log.debug("yt_initial_data_eval_fallback_failed", exc_info=True)
                 finally:
                     with suppress(Exception):
                         await page.close()
@@ -2083,8 +2129,4 @@ class CamoufoxBrowserSession(BrowserSession):
             player = extract_yt_initial_player_response(html)
         except ExtractionError:
             raise
-        try:
-            initial = extract_yt_initial_data(html)
-        except ExtractionError:
-            initial = {}
         return player, initial, html

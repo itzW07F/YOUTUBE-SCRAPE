@@ -25,8 +25,14 @@ const api = {
     ipcRenderer.invoke('shell:showItemInFolder', path),
 
   // App information
-  getAppVersion: (): Promise<string> =>
-    ipcRenderer.invoke('app:version'),
+  getAppVersion: (): Promise<string> => ipcRenderer.invoke('app:version'),
+  getAppLogDirectory: (): Promise<string> => ipcRenderer.invoke('app:logDirectory'),
+  appendAppLog: (
+    level: 'debug' | 'info' | 'warn' | 'error',
+    scope: string,
+    message: string,
+    detail?: unknown
+  ): Promise<void> => ipcRenderer.invoke('app:appendLog', { level, scope, message, detail }),
   getPlatform: (): Promise<string> =>
     ipcRenderer.invoke('app:platform'),
   getAppRuntime: (): Promise<{ arch: string; node: string; electron: string }> =>

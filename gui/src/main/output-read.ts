@@ -14,12 +14,22 @@ export interface VideoMetaRead {
   channelTitle: string | null
   thumbnailUrl: string | null
   localThumbPath: string | null
+  durationSeconds: number | null
+  publishedAt: string | null
+  viewCount: number | null
+  likeCount: number | null
+  dislikeCount: number | null
+  /** From ``video.json`` metadata (watch layout / initial data). Not inferred from ``comments.json``. */
+  commentCount: number | null
+  folderSizeBytes: number | null
 }
 
 export interface MediaFileInfo {
   name: string
   path: string
   type: 'video' | 'audio'
+  /** File size on disk; null if stat failed. */
+  sizeBytes: number | null
 }
 
 export type OutputArtifactKind = 'video' | 'comments' | 'transcript' | 'thumbnails' | 'media' | 'summary'
@@ -59,6 +69,116 @@ function firstExistingFile(outputDir: string, names: string[]): string | null {
     }
   }
   return null
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+/** Prefer ``data`` payload when present (ResultEnvelope); else whole root (legacy flat dump). */
+function envelopeDataRoot(envelope: Record<string, unknown>): Record<string, unknown> {
+  const inner = envelope.data
+  if (inner !== null && typeof inner === 'object' && !Array.isArray(inner)) {
+    return inner as Record<string, unknown>
+  }
+  return envelope
+}
+
+function metadataRecordFromVideoJson(envelope: Record<string, unknown>): Record<string, unknown> | null {
+  const root = envelopeDataRoot(envelope)
+  return asRecord(root.metadata)
+}
+
+function pickMetaUnknown(meta: Record<string, unknown>, keys: string[]): unknown {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(meta, key)) {
+      const value = meta[key]
+      if (value !== undefined && value !== null) {
+        return value
+      }
+    }
+  }
+  return undefined
+}
+
+function pickMetaString(meta: Record<string, unknown>, keys: string[]): string | null {
+  const v = pickMetaUnknown(meta, keys)
+  if (typeof v === 'string' && v.trim() !== '') {
+    return v.trim()
+  }
+  return null
+}
+
+/** Accepts ISO strings or epoch seconds/ms (some tooling exports numbers). */
+function parsePublishedAtField(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim() !== '') {
+    return value.trim()
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const ms = value > 1e12 ? value : value * 1000
+    const d = new Date(ms)
+    if (Number.isFinite(d.getTime())) {
+      return d.toISOString()
+    }
+  }
+  return null
+}
+
+function optFiniteInt(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.trunc(value)
+  }
+  if (typeof value === 'string' && value.trim() !== '') {
+    const normalized = value.trim().replace(/[,_\s\u202f]/g, '')
+    const n = Number(normalized)
+    if (Number.isFinite(n)) {
+      return Math.trunc(n)
+    }
+  }
+  return null
+}
+
+/** Total size of files under ``outputDir`` (stays within resolved output tree). */
+function sumOutputDirectoryBytes(outputDir: string, store: Store): number | null {
+  if (!isOutputDirAllowed(outputDir, store)) {
+    return null
+  }
+  const resolvedRoot = path.resolve(outputDir)
+  let total = 0
+  const walk = (dir: string): void => {
+    let entries: string[]
+    try {
+      entries = fs.readdirSync(dir)
+    } catch {
+      return
+    }
+    for (const name of entries) {
+      const full = path.join(dir, name)
+      const resolved = path.resolve(full)
+      if (resolved !== resolvedRoot && !resolved.startsWith(resolvedRoot + path.sep)) {
+        continue
+      }
+      let st: fs.Stats
+      try {
+        st = fs.statSync(full)
+      } catch {
+        continue
+      }
+      if (st.isDirectory()) {
+        walk(full)
+      } else if (st.isFile()) {
+        total += st.size
+      }
+    }
+  }
+  try {
+    walk(resolvedRoot)
+  } catch {
+    return null
+  }
+  return total
 }
 
 export function readOutputArtifact(
@@ -140,46 +260,70 @@ export function readOutputVideoMeta(outputDir: string, store: Store): VideoMetaR
     title: null,
     channelTitle: null,
     thumbnailUrl: null,
-    localThumbPath: null
+    localThumbPath: null,
+    durationSeconds: null,
+    publishedAt: null,
+    viewCount: null,
+    likeCount: null,
+    dislikeCount: null,
+    commentCount: null,
+    folderSizeBytes: null,
   }
   const videoJson = path.join(outputDir, 'video.json')
   if (fs.existsSync(videoJson)) {
     out.hasArtifacts = true
     try {
       const raw = fs.readFileSync(videoJson, 'utf8')
-      const j = JSON.parse(raw) as {
-        data?: {
-          metadata?: {
-            video_id?: string
-            title?: string
-            channel_title?: string
-            thumbnails?: { url: string; width?: number; height?: number }[]
+      const parsed = JSON.parse(raw) as unknown
+      const j = asRecord(parsed)
+      const m = j ? metadataRecordFromVideoJson(j) : null
+      if (m) {
+        const videoId = pickMetaString(m, ['video_id', 'videoId'])
+        if (videoId) {
+          out.videoId = videoId
+        }
+        const title = pickMetaString(m, ['title'])
+        if (title) {
+          out.title = title
+        }
+        const channelTitle = pickMetaString(m, ['channel_title', 'channelTitle'])
+        if (channelTitle) {
+          out.channelTitle = channelTitle
+        }
+        out.durationSeconds = optFiniteInt(
+          pickMetaUnknown(m, ['duration_seconds', 'durationSeconds', 'length_seconds'])
+        )
+        const publishedRaw = pickMetaUnknown(m, ['published_at', 'publishedAt'])
+        const published = parsePublishedAtField(publishedRaw)
+        if (published) {
+          out.publishedAt = published
+        }
+        out.viewCount = optFiniteInt(pickMetaUnknown(m, ['view_count', 'viewCount', 'views']))
+        out.likeCount = optFiniteInt(pickMetaUnknown(m, ['like_count', 'likeCount', 'likes']))
+        out.dislikeCount = optFiniteInt(pickMetaUnknown(m, ['dislike_count', 'dislikeCount', 'dislikes']))
+        out.commentCount = optFiniteInt(pickMetaUnknown(m, ['comment_count', 'commentCount']))
+        const thumbsRaw = m.thumbnails
+        const thumbs = Array.isArray(thumbsRaw) ? thumbsRaw : []
+        let best: { url: string; width?: number; height?: number } | undefined
+        for (const entry of thumbs) {
+          const t = asRecord(entry)
+          if (!t || typeof t.url !== 'string' || !t.url) {
+            continue
+          }
+          const cand = { url: t.url, width: optFiniteInt(t.width) ?? undefined, height: optFiniteInt(t.height) ?? undefined }
+          if (best == null) {
+            best = cand
+            continue
+          }
+          const aw = (cand.width ?? 0) * (cand.height ?? 0)
+          const bw = (best.width ?? 0) * (best.height ?? 0)
+          if (aw > bw) {
+            best = cand
           }
         }
-      }
-      const m = j.data?.metadata
-      if (m?.video_id) {
-        out.videoId = m.video_id
-      }
-      if (m?.title) {
-        out.title = m.title
-      }
-      if (m?.channel_title) {
-        out.channelTitle = m.channel_title
-      }
-      const thumbs = m?.thumbnails ?? []
-      let best = thumbs[0]
-      for (const t of thumbs) {
-        if (best == null) {
-          best = t
-          continue
+        if (best?.url) {
+          out.thumbnailUrl = best.url
         }
-        if ((t.width ?? 0) * (t.height ?? 0) > (best.width ?? 0) * (best.height ?? 0)) {
-          best = t
-        }
-      }
-      if (best?.url) {
-        out.thumbnailUrl = best.url
       }
     } catch {
       // ignore
@@ -210,6 +354,11 @@ export function readOutputVideoMeta(outputDir: string, store: Store): VideoMetaR
   if (!out.hasArtifacts && listOutputDownloadMedia(outputDir, store).length > 0) {
     out.hasArtifacts = true
   }
+  try {
+    out.folderSizeBytes = sumOutputDirectoryBytes(outputDir, store)
+  } catch {
+    out.folderSizeBytes = null
+  }
   return out
 }
 
@@ -231,10 +380,16 @@ export function listOutputDownloadMedia(outputDir: string, store: Store): MediaF
       continue
     }
     const ext = path.extname(name).toLowerCase()
+    let sizeBytes: number | null = null
+    try {
+      sizeBytes = fs.statSync(full).size
+    } catch {
+      sizeBytes = null
+    }
     if (['.mp4', '.webm', '.mkv', '.m4v', '.mov'].includes(ext)) {
-      list.push({ name, path: full, type: 'video' })
+      list.push({ name, path: full, type: 'video', sizeBytes })
     } else if (['.m4a', '.mp3', '.opus', '.ogg', '.wav', '.aac', '.flac'].includes(ext)) {
-      list.push({ name, path: full, type: 'audio' })
+      list.push({ name, path: full, type: 'audio', sizeBytes })
     }
   }
   return list

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Toaster } from 'react-hot-toast'
 import Sidebar from './components/Sidebar'
@@ -30,19 +30,28 @@ import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 
 type View = 'dashboard' | 'scrape' | 'jobs' | 'results' | 'gallery' | 'settings' | 'debug'
 
+type NavigateOptions = { preserveScrapeOptions?: boolean }
+
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<View>('dashboard')
   const { isServerRunning, checkServerStatus, isDarkMode, setDarkMode } = useAppStore()
 
+  const navigate = useCallback((view: View, options?: NavigateOptions) => {
+    if (view === 'scrape' && !options?.preserveScrapeOptions) {
+      useScrapeStore.getState().resetScrapeTogglesToNone()
+    }
+    setCurrentView(view)
+  }, [])
+
   // Setup keyboard shortcuts
   useKeyboardShortcuts({
-    onNewScrape: () => setCurrentView('scrape'),
-    onOpenJobs: () => setCurrentView('jobs'),
-    onOpenResults: () => setCurrentView('results'),
-    onOpenSettings: () => setCurrentView('settings'),
-    onOpenDebug: () => setCurrentView('debug'),
+    onNewScrape: () => navigate('scrape'),
+    onOpenJobs: () => navigate('jobs'),
+    onOpenResults: () => navigate('results'),
+    onOpenSettings: () => navigate('settings'),
+    onOpenDebug: () => navigate('debug'),
     onToggleTheme: () => setDarkMode(!isDarkMode),
-    onGoBack: () => setCurrentView('dashboard'),
+    onGoBack: () => navigate('dashboard'),
   })
 
   useEffect(() => {
@@ -105,21 +114,21 @@ const App: React.FC = () => {
   const renderView = () => {
     switch (currentView) {
       case 'dashboard':
-        return <Dashboard onNavigate={setCurrentView} />
+        return <Dashboard onNavigate={navigate} />
       case 'scrape':
-        return <ScrapeView onNavigate={setCurrentView} />
+        return <ScrapeView onNavigate={navigate} />
       case 'jobs':
         return <JobsView />
       case 'results':
         return <ResultsView />
       case 'gallery':
-        return <VideoGalleryView />
+        return <VideoGalleryView onNavigateToJobs={() => navigate('jobs')} />
       case 'settings':
         return <SettingsView />
       case 'debug':
         return <DebugView />
       default:
-        return <Dashboard onNavigate={setCurrentView} />
+        return <Dashboard onNavigate={navigate} />
     }
   }
 
@@ -133,6 +142,7 @@ const App: React.FC = () => {
     >
       <Toaster
         position="bottom-right"
+        containerStyle={{ zIndex: 2147483647 }}
         toastOptions={{
           duration: 4000,
           style: isDarkMode
@@ -163,7 +173,7 @@ const App: React.FC = () => {
         }}
       />
       
-      <Sidebar currentView={currentView} onNavigate={setCurrentView} />
+      <Sidebar currentView={currentView} onNavigate={navigate} />
       
       <div className="flex flex-1 flex-col overflow-hidden">
         <Header currentView={currentView} />

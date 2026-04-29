@@ -1,9 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { app } from 'electron'
+import { appendAppFileLog } from './app-file-logger'
 
-/** Append a line to gui/.dev-electron.log in development only. */
+/** Persist to userData/logs; also gui/.dev-electron.log in development. */
 export function devLogLine(message: string): void {
+  appendAppFileLog('main', 'info', message)
   if (app.isPackaged) {
     return
   }

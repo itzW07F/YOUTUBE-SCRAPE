@@ -49,7 +49,19 @@ class Settings(BaseSettings):
         default=0,
         ge=0,
         le=30_000,
-        description="Optional extra wait after watch navigation before reading HTML (helps comments embed).",
+        description=(
+            "Extra wait (ms) after watch navigation; combined with watch_page_comments_hydration_ms "
+            "via max(...) for scroll/hydrate budget."
+        ),
+    )
+    watch_page_comments_hydration_ms: int = Field(
+        default=12_000,
+        ge=0,
+        le=30_000,
+        description=(
+            "Scroll/wait budget so ytd-comments-header-renderer hydrates; needed because ytInitialData "
+            "often omits numeric comment totals until the panel loads."
+        ),
     )
     camoufox_humanize: bool = Field(
         default=True,

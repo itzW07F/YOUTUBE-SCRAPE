@@ -20,3 +20,8 @@ Tests are executable documentation. They must be deterministic, fast, and behavi
 - Cover the happy path, edge cases, and explicit failure modes/exceptions.
 - Reproduce discovered bugs as tests before fixing the underlying code.
 - Treat test code with the same quality standards as production code (DRY, well-named, modular).
+
+## REPOSITORY VERIFICATION (YouTube-Scrape monorepo)
+- **Before reporting work complete** on mixed Python + GUI changes (or when unsure), run **`./verify.sh`** from the repo root: full **`pytest`** plus **`gui` `npm run build`** (TypeScript + **electron-vite** bundling of main/preload/renderer).
+- **Why:** Python-only tests do not compile Electron main-process sources; subset tests can pass while **`electron-vite dev`** / **build** fails on syntax or bundling errors. `npm run build` aligns with what `start-gui.sh` / dev uses for the main bundle.
+- **Heavier check (optional):** `(cd gui && npm run verify:gui)` — Playwright + dev stack; use when validating UI flows or releases, not necessarily every small edit.

@@ -7,6 +7,15 @@ html {
   font-size: calc(16px * var(--app-font-scale, 1));
 }
 
+/* Align native form controls (incl. <select> popups) with app theme — avoids light menus + inherited white text. */
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+}
+
 /* --- Light theme: app uses hardcoded dark Tailwind classes; remaps them when data-theme=light */
 html[data-theme="dark"] body {
   background-color: #0a0a0f;
@@ -190,6 +199,17 @@ html[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
   color: rgba(255, 255, 255, 0.4);
 }
 
+/* Native select options: popup may ignore parent text color; force readable pairs (Chromium/Electron). */
+html[data-theme="dark"] select.futuristic-input option {
+  background-color: #16161f;
+  color: #f4f4f5;
+}
+
+html[data-theme="light"] select.futuristic-input option {
+  background-color: #ffffff;
+  color: #18181b;
+}
+
 /* Button styles */
 .futuristic-btn {
   background: linear-gradient(135deg, rgba(217, 70, 239, 0.12), rgba(124, 58, 237, 0.12));
@@ -250,16 +270,44 @@ html[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
 }
 
 /* Progress bar */
+@keyframes progress-stripes {
+  0% {
+    background-position: 0 0, 0 0;
+  }
+  100% {
+    background-position: 22px 0, 0 0;
+  }
+}
+
 .progress-bar {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 4px;
   overflow: hidden;
 }
 
+.progress-bar--active {
+  box-shadow: inset 0 0 0 1px rgba(217, 70, 239, 0.25);
+}
+
 .progress-bar-fill {
   background: linear-gradient(90deg, #d946ef, #7c3aed);
   border-radius: 4px;
   transition: width 0.3s ease;
+}
+
+.progress-bar-fill--striped {
+  background-image: linear-gradient(
+      -60deg,
+      rgba(255, 255, 255, 0.22) 25%,
+      transparent 25%,
+      transparent 50%,
+      rgba(255, 255, 255, 0.22) 50%,
+      rgba(255, 255, 255, 0.22) 75%,
+      transparent 75%
+    ),
+    linear-gradient(90deg, #d946ef, #7c3aed);
+  background-size: 22px 100%, 100% 100%;
+  animation: progress-stripes 0.65s linear infinite;
 }
 
 /* Toast notifications */

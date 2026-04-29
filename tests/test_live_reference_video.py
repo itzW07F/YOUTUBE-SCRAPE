@@ -63,8 +63,8 @@ def _live_settings() -> Settings:
 def _live_download_settings() -> Settings:
     """Headful by default for progressive download (see ``RUN_LIVE_REFERENCE_HEADFUL``).
 
-    ``page_settle_after_load_ms=0`` skips comment scrolling so metadata extraction and download
-    do not each burn the long settle window (fewer ad reloads when combined with single-tab fetch).
+    ``watch_page_comments_hydration_ms=0`` and ``page_settle_after_load_ms=0`` skip comment-panel
+    hydration so metadata extraction and download do not each burn the scroll/wait window.
     """
     base = _live_settings()
     v = os.environ.get("RUN_LIVE_REFERENCE_HEADFUL", "1").strip().lower()
@@ -72,6 +72,7 @@ def _live_download_settings() -> Settings:
     return base.model_copy(
         update={
             "headless": headless,
+            "watch_page_comments_hydration_ms": 0,
             "page_settle_after_load_ms": 0,
             "browser_timeout_s": 120.0,
             "http_timeout_s": 75.0,

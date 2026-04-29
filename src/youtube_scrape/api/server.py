@@ -21,7 +21,7 @@ from fastapi.responses import JSONResponse
 # Add parent directories to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from api.routes import scrape, dl as download, config, batch
+from api.routes import scrape, dl as download, config, batch, metadata_refresh
 from api.state import get_job_store, get_websocket_manager
 
 # Configure logging
@@ -73,6 +73,7 @@ app.include_router(scrape.router, prefix="/scrape", tags=["scrape"])
 app.include_router(download.router, prefix="/download", tags=["download"])
 app.include_router(config.router, prefix="/config", tags=["config"])
 app.include_router(batch.router, prefix="/batch", tags=["batch"])
+app.include_router(metadata_refresh.router, prefix="/metadata", tags=["metadata"])
 
 
 @app.get("/health")

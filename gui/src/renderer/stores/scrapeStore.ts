@@ -101,6 +101,13 @@ function scrapePresetToIncludes(
 interface ScrapeState {
   jobs: ScrapeJob[]
   activeJobId: string | null
+  /** Cleared after JobsView expands this job once (set when starting a scrape from New Scrape). */
+  pendingAutoExpandJobId: string | null
+  /**
+   * Bumped after gallery `/metadata/refresh-batch` succeeds so Gallery/Results re-read disks
+   * even when the gallery view unmounted mid-request (local React state would reset).
+   */
+  galleryDiskRevisionBump: number
   scrapeOptions: {
     includeVideo: boolean
     includeComments: boolean
@@ -111,7 +118,7 @@ interface ScrapeState {
     transcriptFormat: 'txt' | 'vtt' | 'json'
     videoQuality: string
   }
-  addJob: (job: Omit<ScrapeJob, 'logs'>) => void
+  addJob: (job: Omit<ScrapeJob, 'logs'>, options?: { skipDashboardBump?: boolean }) => void
   updateJob: (id: string, updates: Partial<ScrapeJob>) => void
   addJobLog: (id: string, log: LogEntry) => void
   removeJob: (id: string) => void
@@ -119,9 +126,13 @@ interface ScrapeState {
   /** Remove completed / failed / cancelled jobs; keeps pending and running. */
   clearFinishedJobs: () => void
   setActiveJob: (id: string | null) => void
+  setPendingAutoExpandJobId: (id: string | null) => void
   updateScrapeOptions: (options: Partial<ScrapeState['scrapeOptions']>) => void
   /** Sets exactly one scrape target (or all); used by dashboard Quick Actions. */
   applyScrapePreset: (preset: ScrapeQuickPreset) => void
+  /** Clears all "what to scrape" toggles (direct navigation to New Scrape). */
+  resetScrapeTogglesToNone: () => void
+  bumpGalleryDiskRevision: () => void
 }
 
 export interface DiscoveredScrapeOutput {
@@ -344,8 +355,10 @@ export function jobsForPersistence(jobs: ScrapeJob[]): ScrapeJob[] {
 export const useScrapeStore = create<ScrapeState>((set, get) => ({
   jobs: [],
   activeJobId: null,
+  pendingAutoExpandJobId: null,
+  galleryDiskRevisionBump: 0,
   scrapeOptions: {
-    includeVideo: true,
+    includeVideo: false,
     includeComments: false,
     includeTranscript: false,
     includeThumbnails: false,
@@ -355,8 +368,10 @@ export const useScrapeStore = create<ScrapeState>((set, get) => ({
     videoQuality: 'best',
   },
 
-  addJob: (job) => {
-    notifyDashboardIncrements({ scrapesStarted: 1 })
+  addJob: (job, options) => {
+    if (!options?.skipDashboardBump) {
+      notifyDashboardIncrements({ scrapesStarted: 1 })
+    }
     set((state) => ({
       jobs: [{ ...job, logs: [] }, ...state.jobs],
     }))
@@ -442,6 +457,10 @@ export const useScrapeStore = create<ScrapeState>((set, get) => ({
     set({ activeJobId: id })
   },
 
+  setPendingAutoExpandJobId: (id) => {
+    set({ pendingAutoExpandJobId: id })
+  },
+
   updateScrapeOptions: (options) => {
     set((state) => ({
       scrapeOptions: { ...state.scrapeOptions, ...options },
@@ -456,6 +475,22 @@ export const useScrapeStore = create<ScrapeState>((set, get) => ({
       },
     }))
   },
+
+  resetScrapeTogglesToNone: () => {
+    set((state) => ({
+      scrapeOptions: {
+        ...state.scrapeOptions,
+        includeVideo: false,
+        includeComments: false,
+        includeTranscript: false,
+        includeThumbnails: false,
+        includeDownload: false,
+      },
+    }))
+  },
+
+  bumpGalleryDiskRevision: () =>
+    set((state) => ({ galleryDiskRevisionBump: state.galleryDiskRevisionBump + 1 })),
 }))
 
 /** Flush jobs to electron-store immediately (debounced saver may omit recent websocket logs otherwise). */

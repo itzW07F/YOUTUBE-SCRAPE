@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   FolderOpen,
@@ -29,10 +29,43 @@ interface OutputArtifactRead {
 
 const ResultsView: React.FC = () => {
   const { jobs, removeJobsByOutputDir } = useScrapeStore()
+  const bumpGalleryDiskRevision = useScrapeStore((s) => s.bumpGalleryDiskRevision)
   const { outputDirectory } = useAppStore()
-  const results = useVideoResults(jobs)
+  const galleryDiskRevisionBump = useScrapeStore((s) => s.galleryDiskRevisionBump)
+  const results = useVideoResults(jobs, galleryDiskRevisionBump)
   const [searchQuery, setSearchQuery] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [bulkDeleteToolsOpen, setBulkDeleteToolsOpen] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+
+  useEffect(() => {
+    if (!bulkDeleteToolsOpen) {
+      setSelectedIds(new Set())
+    }
+  }, [bulkDeleteToolsOpen])
+
+  useEffect(() => {
+    const valid = new Set(results.map((r) => r.id))
+    setSelectedIds((prev) => {
+      let dropped = false
+      for (const id of prev) {
+        if (!valid.has(id)) {
+          dropped = true
+          break
+        }
+      }
+      if (!dropped) {
+        return prev
+      }
+      const next = new Set<string>()
+      for (const id of prev) {
+        if (valid.has(id)) {
+          next.add(id)
+        }
+      }
+      return next
+    })
+  }, [results])
 
   const filteredResults = results.filter(
     r =>
@@ -43,6 +76,72 @@ const ResultsView: React.FC = () => {
 
   const handleOpenFolder = (path: string) => {
     window.electronAPI?.showItemInFolder(path)
+  }
+
+  const toggleRowSelected = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }, [])
+
+  const selectAllVisible = useCallback(() => {
+    setSelectedIds(new Set(filteredResults.map((r) => r.id)))
+  }, [filteredResults])
+
+  const clearRowSelection = useCallback(() => {
+    setSelectedIds(new Set())
+  }, [])
+
+  const handleBulkDeleteSelected = async () => {
+    const selected = results.filter((r) => selectedIds.has(r.id))
+    if (selected.length === 0) {
+      if (selectedIds.size > 0) {
+        window.alert('Selection does not match loaded results. Try clearing selection and selecting again.')
+      } else {
+        window.alert('Select at least one result')
+      }
+      return
+    }
+    if (
+      !confirm(
+        `Delete ${selected.length} scrape folder(s) from disk and remove them from the list?\n\nThis cannot be undone.`
+      )
+    ) {
+      return
+    }
+    if (!window.electronAPI?.deleteOutputScrapeDir) {
+      window.alert('Delete is not available in this environment')
+      return
+    }
+    let ok = 0
+    let failed = 0
+    for (const result of selected) {
+      const r = await window.electronAPI.deleteOutputScrapeDir(result.outputDir)
+      if (!r.ok) {
+        failed++
+        continue
+      }
+      removeJobsByOutputDir(result.outputDir)
+      ok++
+      if (expandedId === result.videoId) {
+        setExpandedId(null)
+      }
+    }
+    setSelectedIds(new Set())
+    if (ok > 0) {
+      bumpGalleryDiskRevision()
+    }
+    if (failed > 0 && ok === 0) {
+      window.alert(`Could not delete ${failed} folder(s). Check permissions or paths.`)
+    } else if (failed > 0) {
+      window.alert(`Deleted ${ok} folder(s). ${failed} could not be deleted.`)
+    }
   }
 
   const handleDeleteResult = async (result: VideoResult) => {
@@ -61,6 +160,7 @@ const ResultsView: React.FC = () => {
       }
     }
     removeJobsByOutputDir(result.outputDir)
+    bumpGalleryDiskRevision()
     if (expandedId === result.videoId) {
       setExpandedId(null)
     }
@@ -73,7 +173,30 @@ const ResultsView: React.FC = () => {
           <h2 className="text-2xl font-display font-bold text-white">Results</h2>
           <p className="text-space-400">Browse and manage your scraped data</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {filteredResults.length > 0 ? (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={bulkDeleteToolsOpen}
+              aria-label={
+                bulkDeleteToolsOpen ? 'Close bulk delete selection' : 'Open bulk delete selection'
+              }
+              onClick={() => setBulkDeleteToolsOpen((open) => !open)}
+              title={
+                bulkDeleteToolsOpen
+                  ? 'Hide bulk delete and row checkboxes'
+                  : 'Select folders to delete from disk'
+              }
+              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border transition-colors ${
+                bulkDeleteToolsOpen
+                  ? 'border-rose-500/65 bg-rose-500/20 text-rose-400'
+                  : 'border-white/10 text-rose-400/90 hover:border-rose-500/40 hover:bg-rose-500/10'
+              }`}
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          ) : null}
           <button
             onClick={() => outputDirectory && handleOpenFolder(outputDirectory)}
             className="futuristic-btn flex items-center gap-2"
@@ -95,6 +218,34 @@ const ResultsView: React.FC = () => {
         />
       </div>
 
+      {bulkDeleteToolsOpen && filteredResults.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-rose-500/25 bg-rose-500/[0.06] px-3 py-2">
+          <button type="button" onClick={selectAllVisible} className="futuristic-btn text-sm">
+            Select all visible
+          </button>
+          <button
+            type="button"
+            onClick={clearRowSelection}
+            disabled={selectedIds.size === 0}
+            className="futuristic-btn text-sm disabled:opacity-40"
+          >
+            Clear selection
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleBulkDeleteSelected()}
+            disabled={selectedIds.size === 0}
+            className="futuristic-btn flex items-center gap-2 border border-rose-500/40 bg-rose-500/15 text-sm text-rose-200 disabled:opacity-40"
+          >
+            <Trash2 className="h-4 w-4" />
+            Delete selected
+          </button>
+          {selectedIds.size > 0 ? (
+            <span className="text-sm text-rose-200/80">{selectedIds.size} selected</span>
+          ) : null}
+        </div>
+      ) : null}
+
       {filteredResults.length === 0 ? (
         <div className="glass-card p-12 text-center">
           <div className="w-20 h-20 rounded-full bg-space-800 flex items-center justify-center mx-auto mb-4">
@@ -115,6 +266,9 @@ const ResultsView: React.FC = () => {
               onToggle={() => setExpandedId(expandedId === result.videoId ? null : result.videoId)}
               onOpenFolder={() => handleOpenFolder(result.outputDir)}
               onDelete={() => void handleDeleteResult(result)}
+              bulkSelectMode={bulkDeleteToolsOpen}
+              rowSelected={selectedIds.has(result.id)}
+              onToggleRowSelect={() => toggleRowSelected(result.id)}
             />
           ))}
         </div>
@@ -129,6 +283,9 @@ interface ResultCardProps {
   onToggle: () => void
   onOpenFolder: () => void
   onDelete: () => void
+  bulkSelectMode: boolean
+  rowSelected: boolean
+  onToggleRowSelect: () => void
 }
 
 const ResultThumb: React.FC<{ sources: string[] }> = ({ sources }) => {
@@ -162,7 +319,16 @@ const ResultThumb: React.FC<{ sources: string[] }> = ({ sources }) => {
   )
 }
 
-const ResultCard: React.FC<ResultCardProps> = ({ result, isExpanded, onToggle, onOpenFolder, onDelete }) => {
+const ResultCard: React.FC<ResultCardProps> = ({
+  result,
+  isExpanded,
+  onToggle,
+  onOpenFolder,
+  onDelete,
+  bulkSelectMode,
+  rowSelected,
+  onToggleRowSelect,
+}) => {
   const [activeArtifact, setActiveArtifact] = useState<ArtifactKind | null>(null)
   const [artifact, setArtifact] = useState<OutputArtifactRead | null>(null)
   const [artifactError, setArtifactError] = useState<string | null>(null)
@@ -247,6 +413,18 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, isExpanded, onToggle, o
         tabIndex={0}
         onKeyDown={e => e.key === 'Enter' && onToggle()}
       >
+        {bulkSelectMode ? (
+          <label className="flex shrink-0 cursor-pointer items-center self-center pt-1">
+            <input
+              type="checkbox"
+              checked={rowSelected}
+              onChange={onToggleRowSelect}
+              onClick={e => e.stopPropagation()}
+              className="h-4 w-4 rounded border-glass-border bg-space-900 text-rose-500 focus:ring-rose-500/40"
+              aria-label={`Select for delete: ${result.title}`}
+            />
+          </label>
+        ) : null}
         <div className="w-24 h-16 rounded-lg overflow-hidden bg-space-800 flex-shrink-0 flex items-center justify-center">
           <ResultThumb sources={result.thumbnailSources} />
         </div>

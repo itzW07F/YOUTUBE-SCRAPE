@@ -7,6 +7,7 @@ import {
   FileText,
   Image,
   Download,
+  Layers,
   Settings2,
   ChevronDown,
   ChevronUp,
@@ -21,7 +22,7 @@ type ScrapeOperation = 'video' | 'comments' | 'transcript' | 'thumbnails' | 'dow
 type AppView = 'dashboard' | 'scrape' | 'jobs' | 'results' | 'gallery' | 'settings' | 'debug'
 
 interface ScrapeViewProps {
-  onNavigate: (view: AppView) => void
+  onNavigate: (view: AppView, options?: { preserveScrapeOptions?: boolean }) => void
 }
 
 function selectedOperations(options: ReturnType<typeof useScrapeStore.getState>['scrapeOptions']): ScrapeOperation[] {
@@ -41,7 +42,19 @@ function selectedOperations(options: ReturnType<typeof useScrapeStore.getState>[
   if (options.includeDownload) {
     operations.push('download')
   }
-  return operations.length > 0 ? operations : ['video']
+  return operations
+}
+
+function isAllScrapeTargetsOn(
+  options: ReturnType<typeof useScrapeStore.getState>['scrapeOptions']
+): boolean {
+  return (
+    options.includeVideo &&
+    options.includeComments &&
+    options.includeTranscript &&
+    options.includeThumbnails &&
+    options.includeDownload
+  )
 }
 
 const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
@@ -49,12 +62,20 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   
-  const { scrapeOptions, updateScrapeOptions, addJob, setActiveJob } = useScrapeStore()
+  const {
+    scrapeOptions,
+    updateScrapeOptions,
+    applyScrapePreset,
+    resetScrapeTogglesToNone,
+    addJob,
+    setActiveJob,
+    setPendingAutoExpandJobId,
+  } = useScrapeStore()
   const { serverUrl, isServerRunning } = useAppStore()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    
+
     const normalized = normalizeYoutubeInput(url)
     if (!normalized) {
       toast.error('Please enter a valid YouTube URL or video ID')
@@ -69,7 +90,12 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
     setIsSubmitting(true)
 
     try {
-      // Build the scrape request
+      const operations = selectedOperations(scrapeOptions)
+      if (operations.length === 0) {
+        toast.error('Select at least one scrape target')
+        return
+      }
+
       const response = await fetch(`${serverUrl}/scrape/video`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -92,10 +118,8 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
       }
 
       const data = await response.json()
-      
-      const operations = selectedOperations(scrapeOptions)
+      const isFull = isAllScrapeTargetsOn(scrapeOptions)
 
-      // Add job to store
       addJob({
         id: data.job_id,
         url: normalized,
@@ -108,7 +132,8 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
       })
 
       setActiveJob(data.job_id)
-      toast.success('Scrape job started!')
+      setPendingAutoExpandJobId(data.job_id)
+      toast.success(isFull ? 'Full scrape started!' : 'Scrape job started!')
       setUrl('')
       onNavigate('jobs')
     } catch (error) {
@@ -129,6 +154,9 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
     { key: 'includeThumbnails', label: 'Thumbnails', icon: Image, description: 'All available thumbnail sizes' },
     { key: 'includeDownload', label: 'Download Media', icon: Download, description: 'Video or audio file' },
   ]
+
+  const fullScrapeActive = isAllScrapeTargetsOn(scrapeOptions)
+  const hasScrapeTargets = selectedOperations(scrapeOptions).length > 0
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -214,6 +242,40 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
                   </button>
                 )
               })}
+              <button
+                type="button"
+                onClick={() =>
+                  fullScrapeActive ? resetScrapeTogglesToNone() : applyScrapePreset('all')
+                }
+                className={`
+                  flex items-start gap-3 p-4 rounded-xl border transition-all text-left
+                  ${fullScrapeActive
+                    ? 'bg-neon-purple/10 border-neon-purple/40 text-white'
+                    : 'bg-white/5 border-glass-border text-space-300 hover:bg-white/[0.07]'
+                  }
+                `}
+                title={
+                  fullScrapeActive
+                    ? 'Clear all scrape targets'
+                    : 'Select all scrape targets at once'
+                }
+              >
+                <div
+                  className={`
+                  w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0
+                  ${fullScrapeActive ? 'bg-neon-purple/20' : 'bg-space-700'}
+                `}
+                >
+                  <Layers className={`w-5 h-5 ${fullScrapeActive ? 'text-neon-purple' : 'text-space-400'}`} />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">Full Scrape</span>
+                    {fullScrapeActive && <Check className="w-4 h-4 text-neon-purple" />}
+                  </div>
+                  <p className="text-xs text-space-400 mt-1">All options above in one job</p>
+                </div>
+              </button>
             </div>
           </div>
 
@@ -291,13 +353,19 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
           </div>
 
           {/* Submit Button */}
-          <div className="pt-4">
+          <div className="pt-4 space-y-3">
             <button
               type="submit"
-              disabled={isSubmitting || !url || !isValidYoutubeInput(url) || !isServerRunning}
+              disabled={
+                isSubmitting ||
+                !url ||
+                !isValidYoutubeInput(url) ||
+                !isServerRunning ||
+                !hasScrapeTargets
+              }
               className={`
                 w-full py-4 rounded-xl font-semibold text-lg flex items-center justify-center gap-2
-                ${isSubmitting || !url || !isValidYoutubeInput(url) || !isServerRunning
+                ${isSubmitting || !url || !isValidYoutubeInput(url) || !isServerRunning || !hasScrapeTargets
                   ? 'bg-space-700 text-space-400 cursor-not-allowed'
                   : 'futuristic-btn futuristic-btn-primary'
                 }
@@ -306,7 +374,7 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
               {isSubmitting ? (
                 <>
                   <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Starting Scrape...
+                  Starting Scrape…
                 </>
               ) : (
                 <>
@@ -315,10 +383,14 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
                 </>
               )}
             </button>
-            
             {!isServerRunning && (
-              <p className="mt-3 text-sm text-rose-400 text-center">
+              <p className="text-sm text-rose-400 text-center">
                 API server is not running. Please wait for it to start.
+              </p>
+            )}
+            {isServerRunning && url && isValidYoutubeInput(url) && !hasScrapeTargets && (
+              <p className="text-sm text-amber-200/90 text-center">
+                Choose at least one target under What to Scrape
               </p>
             )}
           </div>

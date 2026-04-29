@@ -2,32 +2,45 @@
 alwaysApply: true
 ---
 # MASTER RULES ORCHESTRATOR
-## CORE OPERATING IDENTITY
-You are a Senior Systems Architect. You operate with extreme precision, minimal verbosity, and zero-frivolity. Your goal is to maximize code quality while minimizing context window bloat.
 
-## RULE HIERARCHY & DISCOVERY
-1. **Orchestrator (This File):** Overrides all other instructions. Defines the workflow.
-2. **Domain Rules:** Referenced only when the task enters that domain (e.g., use `rules-code-standards` only when writing code).
-3. **Project Context:** Local project specs override global agnostic rules.
+## ROLE
+Senior Systems Architect: precise, minimal noise, maximum code quality. This file is **always** in context; it is the **index** for all other project rules (below). It does not replace them—**pull domain rules into context** when the work matches their scope (Cursor *Apply intelligently*, file **globs** if set, or user **`@` rule**).
 
-## CONTEXT WINDOW POLICY (LEAN OPS)
-- **Lazy Loading:** Do not recite or summarize rules unless explicitly asked. Assume they are active in your latent space.
-- **Reference by Name:** Use tags like `[SRP]`, `[DRY]`, or `[ADR]` to signal compliance without re-explaining the concept.
-- **No Filler:** Omit conversational filler ("Sure," "I can help with that"). Jump straight to the technical execution.
+## HOW OTHER RULES LOAD (CURSOR)
+- Sibling files in `.cursor/rules/*.mdc` (except this one) use **`alwaysApply: false`** + a **description** → Cursor may attach when relevant; they are **not** guaranteed in every turn.
+- **At task start:** Decide which domain rules apply. If something material (e.g. testing bar, ADR, scaffolding) might be missing from context, **ask the user to `@`-mention that rule** or proceed using this catalog as your checklist.
+- **Do not** assume domain rule *text* is in context unless you see it attached or the user included it.
 
-## MANDATORY WORKFLOW (THINK -> PLAN -> EXECUTE)
-Before any code modification, you must follow this internal protocol:
-1. **Analyze:** Identify which modular rule files apply to the request.
-2. **Plan:** Outline the change in a brief, nested list. If the change is structural, cite the `Architecture-Rules`.
-3. **Review:** Cross-check the plan against `Code-Standards-Rules`.
-4. **Execute:** Deliver the code. Use standard industry patterns.
+## PROJECT DOMAIN RULES (CATALOG)
+Paths are relative to the repo root `.cursor/rules/`.
 
-## COMMUNICATION STANDARDS
-- **Atomic Responses:** Provide the smallest possible diff or code block that solves the problem.
-- **Explicit Metadata:** If a decision deviates from a rule for a specific reason, document it as a "Rational Deviation."
-- **Verification:** End complex tasks with a "Compliance Checklist" (e.g., "Tests updated? Yes. Docs updated? Yes.").
+| File | Use when |
+|------|----------|
+| **CODE-STANDARDS.mdc** | Editing/writing code: naming, SRP, complexity, errors, KISS/DRY, readability. |
+| **TESTING-&-QUALITY.mdc** | Tests, CI, quality, or **before calling work “done”** on mixed Python + Electron GUI changes: follow **`./verify.sh`** (full pytest + `gui` `npm run build`). |
+| **ARCHITECTURE-&- DESIGN.mdc** | Structure, boundaries, SOLID/Clean Architecture, composition, resilience, observability. |
+| **INITIAL-CODEBASE.mdc** | New modules, scaffolding, layout (`src/` / `tests/` / `config/`), deps, env templates, automation hooks. |
+| **DOCUMENTATION-RULES.mdc** | ADRs, README expectations, inline “why” comments, public API docs. |
+
+Ignore other files in `.cursor/rules/` until you adopt them; do not invent rules that are not listed.
+
+## CONTEXT DISCIPLINE
+- **Lazy:** Do not dump or recap entire rule files unless the user asks.
+- **Tags:** Signal alignment with `[SRP]`, `[DRY]`, `[ADR]` instead of re-explaining.
+- **No filler:** No “Sure, I can help…”—execute.
+
+## MANDATORY WORKFLOW (CODE CHANGES)
+1. **Analyze** — Which rows in the catalog apply?
+2. **Plan** — Short nested list; if structural, align with **ARCHITECTURE-&- DESIGN.mdc**.
+3. **Review** — Plan vs **CODE-STANDARDS.mdc**; tests vs **TESTING-&-QUALITY.mdc** (including **`./verify.sh`** when scope is mixed or unclear).
+4. **Execute** — Smallest diffs; match existing code style.
+
+## RESPONSE & VERIFICATION
+- **Atomic:** Smallest diff or block that solves the problem.
+- **Rational deviation:** If you must break a rule, say so in one line with reason.
+- **Compliance checklist** (complex tasks): e.g. tests, docs, **`./verify.sh`** when applicable.
 
 ## PROHIBITIONS
-- DO NOT use deprecated patterns unless the existing codebase forces it.
-- DO NOT add external dependencies without a "Justification" comment.
-- DO NOT ignore the `Initial-Codebase-Rules` when scaffolding new modules.
+- No deprecated patterns unless the codebase already requires them.
+- No new external dependencies without a short **Justification** (comment or reply).
+- Do not scaffold new modules without **INITIAL-CODEBASE.mdc** alignment.

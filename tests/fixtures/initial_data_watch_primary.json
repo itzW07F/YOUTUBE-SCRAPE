@@ -45,6 +45,19 @@
                   }
                 }
               }
+            },
+            {
+              "itemSectionRenderer": {
+                "contents": [
+                  {
+                    "commentsHeaderRenderer": {
+                      "countText": {
+                        "runs": [{ "text": "9,999" }, { "text": " Comments" }]
+                      }
+                    }
+                  }
+                ]
+              }
             }
           ]
         }

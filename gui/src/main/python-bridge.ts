@@ -97,7 +97,7 @@ export class PythonBridge {
     return path.resolve(path.join(mainDir, '..', '..', '..'))
   }
 
-  async start(): Promise<{ success: boolean; error?: string }> {
+  async start(allowedOutputRoots?: string[]): Promise<{ success: boolean; error?: string }> {
     if (this.status.running) {
       return { success: true }
     }
@@ -125,13 +125,21 @@ export class PythonBridge {
         `spawn: cwd=${spawnCwd} | ${cmdline}`
       )
 
+      const roots = [...new Set((allowedOutputRoots ?? []).map((p) => path.resolve(p.trim())).filter(Boolean))]
+
       // Prepare environment
-      const env = {
+      const env: NodeJS.ProcessEnv = {
         ...process.env,
         PYTHONUNBUFFERED: '1',
         API_HOST: this.config.host,
         API_PORT: port.toString(),
         NODE_ENV: this.isDev ? 'development' : 'production'
+      }
+      if (roots.length > 0) {
+        env.YOUTUBE_SCRAPE_OUTPUT_ROOTS = roots.join(path.delimiter)
+        env.OUTPUT_DIR = roots[0]
+      } else {
+        env.OUTPUT_DIR = path.resolve(spawnCwd, 'output')
       }
 
       this.process = spawn(this.config.pythonPath, args, {

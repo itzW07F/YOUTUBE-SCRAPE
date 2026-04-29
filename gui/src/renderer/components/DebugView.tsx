@@ -8,6 +8,7 @@ import {
   WifiOff,
   RefreshCw,
   Send,
+  FolderOpen,
 } from 'lucide-react'
 import { useAppStore } from '../stores/appStore'
 
@@ -25,7 +26,16 @@ const DebugView: React.FC = () => {
   const [isConnected, setIsConnected] = useState(false)
   const [apiResponse, setApiResponse] = useState<string>('')
   const [testEndpoint, setTestEndpoint] = useState('/health')
+  const [persistentLogDir, setPersistentLogDir] = useState<string>('')
   const logsEndRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    void window.electronAPI.getAppLogDirectory().then((dir) => {
+      if (typeof dir === 'string' && dir.length > 0) {
+        setPersistentLogDir(dir)
+      }
+    })
+  }, [])
 
   useEffect(() => {
     // Subscribe to Python server logs
@@ -170,6 +180,30 @@ const DebugView: React.FC = () => {
           </button>
         ))}
       </div>
+
+      {persistentLogDir ? (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="glass-card p-4 mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-white">Persistent log files</p>
+            <p className="mt-1 break-all font-mono text-xs text-space-400">{persistentLogDir}</p>
+            <p className="mt-1 text-xs text-space-500">
+              Daily files: youtube-scrape-YYYY-MM-DD.log (main, renderer, and Python process output).
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void window.electronAPI.openPath(persistentLogDir)}
+            className="futuristic-btn flex shrink-0 items-center gap-2 self-start sm:self-center"
+          >
+            <FolderOpen className="h-4 w-4" />
+            Open folder
+          </button>
+        </motion.div>
+      ) : null}
 
       {/* API Tester */}
       <motion.div

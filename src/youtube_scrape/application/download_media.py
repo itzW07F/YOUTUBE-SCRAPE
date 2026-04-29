@@ -456,7 +456,7 @@ class DownloadMediaService:
         log.warning(
             "experimental_download_deprecated",
             extra={
-                "message": (
+                "deprecation_notice": (
                     "Experimental browser-based download is DEPRECATED and will be removed. "
                     "It produces ~22 second clips with potential playback issues. "
                     "Use yt-dlp (default) for full video downloads. "

@@ -25,6 +25,10 @@ class VideoMetadata(BaseModel):
     view_count: int | None = None
     like_count: int | None = None
     dislike_count: int | None = None
+    comment_count: int | None = Field(
+        default=None,
+        description="Total public comment count from watch layout (comments header below the player).",
+    )
     dislike_source: Literal["return_youtube_dislike"] | None = Field(
         default=None,
         description=(

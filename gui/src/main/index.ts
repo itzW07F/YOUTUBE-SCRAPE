@@ -4,7 +4,8 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { pythonBridge } from './python-bridge'
 import { devLogLine } from './dev-logger'
-import { setupAppMediaProtocol } from './media-serve'
+import { appendAppFileLog, getAppLogDirectory } from './app-file-logger'
+import { setupAppMediaProtocol, getAllowedOutputRoots } from './media-serve'
 import {
   applyDashboardTrackerIncrements,
   flushDashboardTrackers,
@@ -118,7 +119,7 @@ function createWindow(): void {
     devLogLine(`python spawn context: ${JSON.stringify(pythonBridge.getSpawnContextForLog())}`)
 
     // Start Python server automatically
-    void pythonBridge.start().then((result) => {
+    void pythonBridge.start(getAllowedOutputRoots(store)).then((result) => {
       devLogLine(`pythonBridge.start result: ${JSON.stringify(result)}`)
       if (!result.success) {
         console.error('Failed to start Python server:', result.error)
@@ -224,7 +225,7 @@ app.whenReady().then(() => {
 
   // IPC handlers for Python server
   ipcMain.handle('python:start', async () => {
-    return await pythonBridge.start()
+    return await pythonBridge.start(getAllowedOutputRoots(store))
   })
 
   ipcMain.handle('python:stop', async () => {
@@ -237,6 +238,7 @@ app.whenReady().then(() => {
 
   // Forward Python logs to renderer
   pythonBridge.onLog((log) => {
+    appendAppFileLog('python', log.level, log.message)
     mainWindow?.webContents.send('python:log', log)
   })
 
@@ -280,6 +282,24 @@ app.whenReady().then(() => {
       electron: process.versions.electron
     }
   })
+
+  ipcMain.handle(
+    'app:appendLog',
+    (
+      _,
+      payload: { level?: string; scope?: string; message?: string; detail?: unknown }
+    ) => {
+      const msg = payload?.message
+      if (typeof msg !== 'string') {
+        return
+      }
+      const scope = typeof payload.scope === 'string' ? payload.scope : 'renderer'
+      const level = typeof payload.level === 'string' ? payload.level : 'info'
+      appendAppFileLog('renderer', level, `[${scope}] ${msg}`, payload.detail)
+    }
+  )
+
+  ipcMain.handle('app:logDirectory', () => getAppLogDirectory())
 
   ipcMain.handle('output:readVideoMeta', (_, outputDir: string) => {
     return readOutputVideoMeta(outputDir, store)

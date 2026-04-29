@@ -13,7 +13,10 @@ import {
 
 interface SidebarProps {
   currentView: string
-  onNavigate: (view: 'dashboard' | 'scrape' | 'jobs' | 'results' | 'gallery' | 'settings' | 'debug') => void
+  onNavigate: (
+    view: 'dashboard' | 'scrape' | 'jobs' | 'results' | 'gallery' | 'settings' | 'debug',
+    options?: { preserveScrapeOptions?: boolean }
+  ) => void
 }
 
 const navItems = [

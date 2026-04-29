@@ -94,6 +94,7 @@ def parse_video_metadata(player: dict[str, Any]) -> VideoMetadata:
         published_at=_parse_published_at(player),
         view_count=_as_int(details.get("viewCount")),
         like_count=_as_int(details.get("likeCount")),
+        comment_count=_as_int(details.get("commentCount")),
         duration_seconds=_as_int(details.get("lengthSeconds")),
         thumbnails=_parse_thumbnails(details),
         keywords=list(details.get("keywords") or []) if isinstance(details.get("keywords"), list) else [],

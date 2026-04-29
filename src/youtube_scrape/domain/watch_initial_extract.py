@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
 
 from youtube_scrape.domain.engagement_count_parse import parse_engagement_count_text
 from youtube_scrape.domain.models import VideoMetadata
 from youtube_scrape.domain.time_normalize import parse_published_text_to_utc
+
+# Set on ``initial`` by the browser adapter after the comments panel hydrates in the DOM.
+DOM_COMMENT_COUNT_SCRATCH_KEY: str = "_youtube_scrape_dom_comment_total"
 
 
 def _iter_primary_column_cells(initial: dict[str, Any]) -> list[dict[str, Any]]:
@@ -21,6 +26,161 @@ def _iter_primary_column_cells(initial: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(contents, list):
         return []
     return [c for c in contents if isinstance(c, dict)]
+
+
+def _iter_all_dicts(node: Any) -> Iterator[dict[str, Any]]:
+    if isinstance(node, dict):
+        yield node
+        for v in node.values():
+            yield from _iter_all_dicts(v)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _iter_all_dicts(item)
+
+
+def _text_from_runs(runs: Any) -> str | None:
+    if not isinstance(runs, list):
+        return None
+    parts: list[str] = []
+    for run in runs:
+        if isinstance(run, dict) and run.get("text") is not None:
+            parts.append(str(run.get("text", "")))
+    out = "".join(parts).strip()
+    return out or None
+
+
+def _parse_comment_countish_dict(d: dict[str, Any]) -> int | None:
+    """Parse a public comment total from renderer-shaped dicts (header / entry point)."""
+    cc = d.get("commentCount")
+    if isinstance(cc, dict):
+        st = cc.get("simpleText")
+        if isinstance(st, str):
+            n = parse_engagement_count_text(st)
+            if n is not None:
+                return n
+        runs_txt = _text_from_runs(cc.get("runs"))
+        if runs_txt is not None:
+            n = parse_engagement_count_text(runs_txt)
+            if n is not None:
+                return n
+    ct = d.get("countText")
+    if isinstance(ct, dict):
+        runs_txt = _text_from_runs(ct.get("runs"))
+        if runs_txt is not None:
+            n = parse_engagement_count_text(runs_txt)
+            if n is not None:
+                return n
+        st = ct.get("simpleText")
+        if isinstance(st, str):
+            n = parse_engagement_count_text(st)
+            if n is not None:
+                return n
+    cnt = d.get("count")
+    if isinstance(cnt, dict):
+        st2 = cnt.get("simpleText")
+        if isinstance(st2, str):
+            n = parse_engagement_count_text(st2)
+            if n is not None:
+                return n
+    ci = d.get("contextualInfo")
+    if isinstance(ci, dict):
+        runs_txt = _text_from_runs(ci.get("runs"))
+        if runs_txt is not None:
+            n = parse_engagement_count_text(runs_txt)
+            if n is not None:
+                return n
+        st = ci.get("simpleText")
+        if isinstance(st, str):
+            n = parse_engagement_count_text(st)
+            if n is not None:
+                return n
+    return None
+
+
+# Match "9,999 Comments" / "2.5K Comments" in engagement / accessibility labels (primary column).
+_COMMENT_TOTAL_LABEL_RE = re.compile(
+    r"([\d,.]+(?:[KkMmBb])?)\s*Comments?\b",
+    re.IGNORECASE,
+)
+
+
+def _comment_total_from_visible_label_text(s: str | None) -> int | None:
+    if not s or "comment" not in s.lower():
+        return None
+    norm = s.replace("\xa0", " ").strip()
+    m = _COMMENT_TOTAL_LABEL_RE.search(norm)
+    if not m:
+        return None
+    return parse_engagement_count_text(m.group(1))
+
+
+def parse_public_comment_total_from_heading_text(text: str | None) -> int | None:
+    """Parse counts like ``2,434,618 Comments`` from ``ytd-comments-header-renderer`` heading text."""
+    if not text:
+        return None
+    return _comment_total_from_visible_label_text(text.replace("\xa0", " ").strip())
+
+
+def _fallback_comment_totals_from_primary_column_text(initial: dict[str, Any]) -> list[int]:
+    """Engagement row / accessibility labels under the video (avoids sidebar / related video ``commentCount``)."""
+    out: list[int] = []
+    for cell in _iter_primary_column_cells(initial):
+        for node in _iter_all_dicts(cell):
+            if not isinstance(node, dict):
+                continue
+            st = node.get("simpleText")
+            if isinstance(st, str):
+                n = _comment_total_from_visible_label_text(st)
+                if n is not None:
+                    out.append(n)
+            runs = node.get("runs")
+            if isinstance(runs, list):
+                joined = _text_from_runs(runs)
+                n = _comment_total_from_visible_label_text(joined)
+                if n is not None:
+                    out.append(n)
+            acc = node.get("accessibility")
+            if isinstance(acc, dict):
+                ad = acc.get("accessibilityData")
+                if isinstance(ad, dict) and isinstance(ad.get("label"), str):
+                    n = _comment_total_from_visible_label_text(ad["label"])
+                    if n is not None:
+                        out.append(n)
+    return out
+
+
+def extract_public_comment_count_from_initial(initial: dict[str, Any]) -> int | None:
+    """Parse total public comment count from watch ``ytInitialData``.
+
+    Order matters: related / recommended surfaces can embed early ``commentCount`` nodes with
+    wrong/stale values. Prefer comment header renderers, then primary-column labels, then the
+    max of any remaining ``commentCount`` blobs (legacy / edge cases).
+    """
+    header_hits: list[int] = []
+    for node in _iter_all_dicts(initial):
+        if not isinstance(node, dict):
+            continue
+        for key in ("commentsHeaderRenderer", "commentsEntryPointHeaderRenderer"):
+            sub = node.get(key)
+            if isinstance(sub, dict):
+                n = _parse_comment_countish_dict(sub)
+                if n is not None:
+                    header_hits.append(n)
+    if header_hits:
+        return max(header_hits)
+
+    primary_hits = _fallback_comment_totals_from_primary_column_text(initial)
+    if primary_hits:
+        return max(primary_hits)
+
+    generic: list[int] = []
+    for node in _iter_all_dicts(initial):
+        if not isinstance(node, dict) or "commentCount" not in node:
+            continue
+        n = _parse_comment_countish_dict(node)
+        if n is not None:
+            generic.append(n)
+    return max(generic) if generic else None
 
 
 def find_video_primary_info_renderer(initial: dict[str, Any]) -> dict[str, Any] | None:
@@ -99,29 +259,45 @@ def enrich_video_metadata_from_initial(
     *,
     now_utc: datetime | None = None,
 ) -> VideoMetadata:
-    """Fill gaps using ``videoPrimaryInfoRenderer`` (likes and human-readable publish date)."""
+    """Fill gaps from watch ``ytInitialData`` (primary info, comments header, etc.)."""
     if not initial:
         return meta
-    vpir = find_video_primary_info_renderer(initial)
-    if vpir is None:
-        return meta
     updates: dict[str, Any] = {}
-    clock = _to_utc_naive(now_utc)
-    date_text_raw = (vpir.get("dateText") or {}).get("simpleText")
-    if isinstance(date_text_raw, str):
-        date_text = date_text_raw.strip()
-        if date_text:
-            if meta.published_text is None:
-                updates["published_text"] = date_text
-            if meta.published_at is None:
-                parsed = parse_published_text_to_utc(date_text, now_utc=clock)
-                if parsed is not None:
-                    updates["published_at"] = parsed
-    like_n, dislike_n = extract_like_dislike_from_vpir(vpir)
-    if meta.like_count is None and like_n is not None:
-        updates["like_count"] = like_n
-    if meta.dislike_count is None and dislike_n is not None:
-        updates["dislike_count"] = dislike_n
+
+    dom_cc: int | None = None
+    initial_for_json = initial
+    raw_dom = initial.get(DOM_COMMENT_COUNT_SCRATCH_KEY)
+    if isinstance(raw_dom, int) and raw_dom >= 0:
+        dom_cc = raw_dom
+    if dom_cc is not None or DOM_COMMENT_COUNT_SCRATCH_KEY in initial:
+        initial_for_json = {k: v for k, v in initial.items() if k != DOM_COMMENT_COUNT_SCRATCH_KEY}
+
+    # ytInitial comment header often lacks the numeric total; DOM hydration is authoritative then.
+    public_cc = extract_public_comment_count_from_initial(initial_for_json)
+    if dom_cc is not None:
+        updates["comment_count"] = dom_cc
+    elif public_cc is not None:
+        updates["comment_count"] = public_cc
+
+    vpir = find_video_primary_info_renderer(initial)
+    if vpir is not None:
+        clock = _to_utc_naive(now_utc)
+        date_text_raw = (vpir.get("dateText") or {}).get("simpleText")
+        if isinstance(date_text_raw, str):
+            date_text = date_text_raw.strip()
+            if date_text:
+                if meta.published_text is None:
+                    updates["published_text"] = date_text
+                if meta.published_at is None:
+                    parsed = parse_published_text_to_utc(date_text, now_utc=clock)
+                    if parsed is not None:
+                        updates["published_at"] = parsed
+        like_n, dislike_n = extract_like_dislike_from_vpir(vpir)
+        if meta.like_count is None and like_n is not None:
+            updates["like_count"] = like_n
+        if meta.dislike_count is None and dislike_n is not None:
+            updates["dislike_count"] = dislike_n
+
     if not updates:
         return meta
     return meta.model_copy(update=updates)
