@@ -102,6 +102,11 @@ _COMMENT_TOTAL_LABEL_RE = re.compile(
     r"([\d,.]+(?:[KkMmBb])?)\s*Comments?\b",
     re.IGNORECASE,
 )
+# "Comments • 12,345" / "Comments · 2.6K" (section title variants under the player).
+_COMMENT_LEADING_BEFORE_NUMBER_RE = re.compile(
+    r"Comments?\s*[:\u2022·•]+\s*([\d,.]+(?:[KkMmBb])?\b)",
+    re.IGNORECASE,
+)
 
 
 def _comment_total_from_visible_label_text(s: str | None) -> int | None:
@@ -109,9 +114,12 @@ def _comment_total_from_visible_label_text(s: str | None) -> int | None:
         return None
     norm = s.replace("\xa0", " ").strip()
     m = _COMMENT_TOTAL_LABEL_RE.search(norm)
-    if not m:
-        return None
-    return parse_engagement_count_text(m.group(1))
+    if m:
+        return parse_engagement_count_text(m.group(1))
+    m2 = _COMMENT_LEADING_BEFORE_NUMBER_RE.search(norm)
+    if m2:
+        return parse_engagement_count_text(m2.group(1))
+    return None
 
 
 def parse_public_comment_total_from_heading_text(text: str | None) -> int | None:

@@ -12,16 +12,28 @@ function applyUiFontSizePercentToDom(percent: number): void {
   document.documentElement.style.setProperty('--app-font-scale', String(p / 100))
 }
 
+export const DOWNLOAD_MAX_CONCURRENT_DEFAULT = 2
+export const DOWNLOAD_MAX_CONCURRENT_MIN = 1
+export const DOWNLOAD_MAX_CONCURRENT_MAX = 16
+export const FFMPEG_THREADS_DEFAULT = 0
+export const FFMPEG_THREADS_MAX = 64
+
 interface AppState {
   isServerRunning: boolean
   serverUrl: string | null
   isDarkMode: boolean
   outputDirectory: string
   uiFontSizePercent: number
+  /** Concurrent scrape jobs allowed on the Python API (browser-heavy). */
+  downloadMaxConcurrentJobs: number
+  /** FFmpeg -threads for transcoding/remux (0 = omit, use FFmpeg default/auto). */
+  ffmpegThreads: number
   checkServerStatus: () => Promise<void>
   setDarkMode: (isDark: boolean) => void
   setOutputDirectory: (path: string) => void
   setUiFontSizePercent: (percent: number) => void
+  setDownloadMaxConcurrentJobs: (n: number) => void
+  setFfmpegThreads: (n: number) => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -30,6 +42,8 @@ export const useAppStore = create<AppState>((set) => ({
   isDarkMode: true,
   outputDirectory: '',
   uiFontSizePercent: UI_FONT_SIZE_DEFAULT,
+  downloadMaxConcurrentJobs: DOWNLOAD_MAX_CONCURRENT_DEFAULT,
+  ffmpegThreads: FFMPEG_THREADS_DEFAULT,
 
   checkServerStatus: async () => {
     if (typeof window === 'undefined' || !window.electronAPI) {
@@ -73,6 +87,25 @@ export const useAppStore = create<AppState>((set) => ({
     applyUiFontSizePercentToDom(p)
     if (typeof window !== 'undefined' && window.electronAPI) {
       void window.electronAPI.storeSet('uiFontSizePercent', p)
+    }
+  },
+
+  setDownloadMaxConcurrentJobs: (n: number) => {
+    const v = Math.min(
+      DOWNLOAD_MAX_CONCURRENT_MAX,
+      Math.max(DOWNLOAD_MAX_CONCURRENT_MIN, Math.round(Number(n)) || DOWNLOAD_MAX_CONCURRENT_DEFAULT)
+    )
+    set({ downloadMaxConcurrentJobs: v })
+    if (typeof window !== 'undefined' && window.electronAPI) {
+      void window.electronAPI.storeSet('downloadMaxConcurrentJobs', v)
+    }
+  },
+
+  setFfmpegThreads: (n: number) => {
+    const v = Math.min(FFMPEG_THREADS_MAX, Math.max(0, Math.round(Number(n)) || 0))
+    set({ ffmpegThreads: v })
+    if (typeof window !== 'undefined' && window.electronAPI) {
+      void window.electronAPI.storeSet('ffmpegThreads', v)
     }
   },
 }))
@@ -129,5 +162,41 @@ export function hydrateUiFontSizeFromStore(): void {
     })
     .catch(() => {
       applyUiFontSizePercentToDom(UI_FONT_SIZE_DEFAULT)
+    })
+}
+
+/** Parallel scrape jobs + FFmpeg thread settings (Python process reads these on spawn via env). */
+export function hydrateDownloadSpawnSettingsFromStore(): void {
+  if (typeof window === 'undefined' || !window.electronAPI) {
+    return
+  }
+  void Promise.all([
+    window.electronAPI.storeGet('downloadMaxConcurrentJobs'),
+    window.electronAPI.storeGet('ffmpegThreads'),
+  ])
+    .then(([jobs, threads]) => {
+      const jc =
+        typeof jobs === 'number'
+          ? jobs
+          : typeof jobs === 'string'
+            ? Number.parseInt(jobs, 10)
+            : Number.NaN
+      const ft =
+        typeof threads === 'number'
+          ? threads
+          : typeof threads === 'string'
+            ? Number.parseInt(threads, 10)
+            : Number.NaN
+      useAppStore.setState({
+        downloadMaxConcurrentJobs:
+          Number.isFinite(jc) && jc >= DOWNLOAD_MAX_CONCURRENT_MIN && jc <= DOWNLOAD_MAX_CONCURRENT_MAX
+            ? jc
+            : DOWNLOAD_MAX_CONCURRENT_DEFAULT,
+        ffmpegThreads:
+          Number.isFinite(ft) && ft >= 0 && ft <= FFMPEG_THREADS_MAX ? ft : FFMPEG_THREADS_DEFAULT,
+      })
+    })
+    .catch(() => {
+      // ignore
     })
 }

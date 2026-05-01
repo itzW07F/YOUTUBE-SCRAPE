@@ -167,6 +167,7 @@ function VideoArtifactView({
   const views = meta.view_count
   const likes = meta.like_count
   const dislikes = meta.dislike_count
+  const commentsSite = meta.comment_count
   const duration = meta.duration_seconds
   const description = pickStr(meta.description)
   const published = formatPublished(meta.published_at, pickStr(meta.published_text))
@@ -191,6 +192,11 @@ function VideoArtifactView({
         <Stat label="Duration" value={formatDuration(duration)} />
         <Stat label="Views" value={formatNum(views)} />
         <Stat label="Likes" value={formatNum(likes)} />
+        <Stat
+          label="Comments (on site)"
+          value={formatNum(commentsSite)}
+          title="Total public comments from YouTube watch metadata header (not scraped thread count)."
+        />
         <div>
           <Stat label="Dislikes" value={formatNum(dislikes)} />
           {dislikeSource === 'return_youtube_dislike' && (
@@ -778,13 +784,16 @@ function Stat({
   label,
   value,
   mono,
+  title,
 }: {
   label: string
   value: string
   mono?: boolean
+  /** Optional tooltip for the statistic block */
+  title?: string
 }): React.ReactElement {
   return (
-    <div>
+    <div title={title}>
       <p className="text-xs uppercase tracking-wide text-space-500">{label}</p>
       <p className={`mt-0.5 text-sm text-space-200 ${mono ? 'font-mono text-xs' : ''}`}>{value}</p>
     </div>

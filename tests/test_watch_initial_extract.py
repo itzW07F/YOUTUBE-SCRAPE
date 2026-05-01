@@ -109,6 +109,8 @@ def test_extract_prefers_comments_header_over_loose_comment_count() -> None:
 
 def test_parse_public_comment_total_from_heading_text() -> None:
     assert parse_public_comment_total_from_heading_text("2,434,618 Comments") == 2_434_618
+    assert parse_public_comment_total_from_heading_text("Comments • 1.5K") == 1500
+    assert parse_public_comment_total_from_heading_text("Comments · 4210 replies") == 4210
     assert parse_public_comment_total_from_heading_text("Comments are turned off") is None
 
 

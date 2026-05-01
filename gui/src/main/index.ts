@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, dialog, protocol, Menu } from 'elec
 import { createRequire } from 'node:module'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { pythonBridge } from './python-bridge'
+import { pythonBridge, youtubeScrapeSpawnEnvExtras } from './python-bridge'
 import { devLogLine } from './dev-logger'
 import { appendAppFileLog, getAppLogDirectory } from './app-file-logger'
 import { setupAppMediaProtocol, getAllowedOutputRoots } from './media-serve'
@@ -119,12 +119,14 @@ function createWindow(): void {
     devLogLine(`python spawn context: ${JSON.stringify(pythonBridge.getSpawnContextForLog())}`)
 
     // Start Python server automatically
-    void pythonBridge.start(getAllowedOutputRoots(store)).then((result) => {
-      devLogLine(`pythonBridge.start result: ${JSON.stringify(result)}`)
-      if (!result.success) {
-        console.error('Failed to start Python server:', result.error)
-      }
-    })
+    void pythonBridge
+      .start(getAllowedOutputRoots(store), youtubeScrapeSpawnEnvExtras(store))
+      .then((result) => {
+        devLogLine(`pythonBridge.start result: ${JSON.stringify(result)}`)
+        if (!result.success) {
+          console.error('Failed to start Python server:', result.error)
+        }
+      })
   })
 
   // Handle window state changes
@@ -225,7 +227,13 @@ app.whenReady().then(() => {
 
   // IPC handlers for Python server
   ipcMain.handle('python:start', async () => {
-    return await pythonBridge.start(getAllowedOutputRoots(store))
+    return await pythonBridge.start(getAllowedOutputRoots(store), youtubeScrapeSpawnEnvExtras(store))
+  })
+
+  ipcMain.handle('python:restart', async () => {
+    await pythonBridge.stop()
+    await new Promise((r) => setTimeout(r, 400))
+    return pythonBridge.start(getAllowedOutputRoots(store), youtubeScrapeSpawnEnvExtras(store))
   })
 
   ipcMain.handle('python:stop', async () => {

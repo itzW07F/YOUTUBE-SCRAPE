@@ -5,6 +5,8 @@ const api = {
   // Python server lifecycle
   startPythonServer: (): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('python:start'),
+  restartPythonServer: (): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('python:restart'),
   stopPythonServer: (): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('python:stop'),
   getServerStatus: (): Promise<{ running: boolean; port?: number; url?: string }> =>

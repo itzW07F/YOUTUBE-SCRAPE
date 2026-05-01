@@ -19,6 +19,7 @@ const viewTitles: Record<string, string> = {
   jobs: 'Scrape Jobs',
   results: 'Results',
   gallery: 'Video Gallery',
+  analytics: 'Analytics',
   settings: 'Settings',
   debug: 'Debug Console',
 }

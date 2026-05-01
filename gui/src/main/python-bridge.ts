@@ -25,6 +25,106 @@ interface LogEntry {
   timestamp: string
 }
 
+export type PythonSpawnEnvExtras = Partial<{
+  YOUTUBE_SCRAPE_MAX_CONCURRENT_SCRAPE_JOBS: string
+  YOUTUBE_SCRAPE_FFMPEG_THREADS: string
+  YOUTUBE_SCRAPE_ANALYTICS_LLM_PROVIDER: string
+  YOUTUBE_SCRAPE_ANALYTICS_OLLAMA_ENABLED: string
+  YOUTUBE_SCRAPE_OLLAMA_BASE_URL: string
+  YOUTUBE_SCRAPE_OLLAMA_MODEL: string
+  YOUTUBE_SCRAPE_OPENAI_COMPATIBLE_BASE_URL: string
+  YOUTUBE_SCRAPE_OPENAI_COMPATIBLE_API_KEY: string
+  YOUTUBE_SCRAPE_OPENAI_COMPATIBLE_MODEL: string
+  YOUTUBE_SCRAPE_ANTHROPIC_BASE_URL: string
+  YOUTUBE_SCRAPE_ANTHROPIC_API_KEY: string
+  YOUTUBE_SCRAPE_ANTHROPIC_MODEL: string
+  YOUTUBE_SCRAPE_GOOGLE_GEMINI_API_KEY: string
+  YOUTUBE_SCRAPE_GOOGLE_GEMINI_MODEL: string
+}>
+
+type ElectronStoreLike = { get(key: string, defaultValue?: unknown): unknown }
+
+const ANALYTICS_LLM_PROVIDERS = ['ollama', 'openai_compatible', 'anthropic', 'google_gemini'] as const
+type AnalyticsLlmProviderId = (typeof ANALYTICS_LLM_PROVIDERS)[number]
+
+function stripTrailingSlashes(s: string): string {
+  const t = s.trim()
+  if (!t) {
+    return t
+  }
+  return t.replace(/\/+$/, '')
+}
+
+function storeString(v: unknown, fallback: string): string {
+  if (typeof v === 'string' && v.trim()) {
+    return v.trim()
+  }
+  return fallback
+}
+
+function analyticsLlmProviderFromStore(raw: unknown): AnalyticsLlmProviderId {
+  return ANALYTICS_LLM_PROVIDERS.includes(raw as AnalyticsLlmProviderId)
+    ? (raw as AnalyticsLlmProviderId)
+    : 'ollama'
+}
+
+function storeBool(v: unknown, defaultValue: boolean): boolean {
+  if (v === false) {
+    return false
+  }
+  if (v === true) {
+    return true
+  }
+  return defaultValue
+}
+
+function clampInt(n: unknown, fallback: number, min: number, max: number): number {
+  const x = typeof n === 'number' ? n : typeof n === 'string' ? Number.parseInt(n, 10) : Number.NaN
+  if (!Number.isFinite(x)) {
+    return fallback
+  }
+  return Math.min(max, Math.max(min, Math.floor(x)))
+}
+
+/** Build env overrides for the Python scrape API from Electron store. */
+export function youtubeScrapeSpawnEnvExtras(store: ElectronStoreLike): PythonSpawnEnvExtras {
+  const jc = clampInt(store.get('downloadMaxConcurrentJobs', 2), 2, 1, 16)
+  const ft = clampInt(store.get('ffmpegThreads', 0), 0, 0, 64)
+  const provider = analyticsLlmProviderFromStore(store.get('analyticsLlmProvider', 'ollama'))
+  const analyticsLlmOn = storeBool(store.get('analyticsOllamaEnabled', true), true)
+  return {
+    YOUTUBE_SCRAPE_MAX_CONCURRENT_SCRAPE_JOBS: String(jc),
+    YOUTUBE_SCRAPE_FFMPEG_THREADS: String(ft),
+    YOUTUBE_SCRAPE_ANALYTICS_LLM_PROVIDER: provider,
+    YOUTUBE_SCRAPE_ANALYTICS_OLLAMA_ENABLED: analyticsLlmOn ? 'true' : 'false',
+    YOUTUBE_SCRAPE_OLLAMA_BASE_URL: stripTrailingSlashes(
+      storeString(store.get('ollamaBaseUrl', ''), 'http://127.0.0.1:11434')
+    ),
+    YOUTUBE_SCRAPE_OLLAMA_MODEL: storeString(store.get('ollamaModel', ''), 'gpt-oss:20b'),
+    YOUTUBE_SCRAPE_OPENAI_COMPATIBLE_BASE_URL: stripTrailingSlashes(
+      storeString(store.get('openaiCompatibleBaseUrl', ''), 'https://api.openai.com/v1')
+    ),
+    YOUTUBE_SCRAPE_OPENAI_COMPATIBLE_API_KEY: storeString(store.get('openaiCompatibleApiKey', ''), ''),
+    YOUTUBE_SCRAPE_OPENAI_COMPATIBLE_MODEL: storeString(
+      store.get('openaiCompatibleModel', ''),
+      'gpt-4o-mini'
+    ),
+    YOUTUBE_SCRAPE_ANTHROPIC_BASE_URL: stripTrailingSlashes(
+      storeString(store.get('anthropicBaseUrl', ''), 'https://api.anthropic.com')
+    ),
+    YOUTUBE_SCRAPE_ANTHROPIC_API_KEY: storeString(store.get('anthropicApiKey', ''), ''),
+    YOUTUBE_SCRAPE_ANTHROPIC_MODEL: storeString(
+      store.get('anthropicModel', ''),
+      'claude-sonnet-4-20250514'
+    ),
+    YOUTUBE_SCRAPE_GOOGLE_GEMINI_API_KEY: storeString(store.get('googleGeminiApiKey', ''), ''),
+    YOUTUBE_SCRAPE_GOOGLE_GEMINI_MODEL: storeString(
+      store.get('googleGeminiModel', ''),
+      'gemini-2.0-flash'
+    ),
+  }
+}
+
 export class PythonBridge {
   private process: ChildProcess | null = null
   private status: ServerStatus = { running: false }
@@ -97,7 +197,10 @@ export class PythonBridge {
     return path.resolve(path.join(mainDir, '..', '..', '..'))
   }
 
-  async start(allowedOutputRoots?: string[]): Promise<{ success: boolean; error?: string }> {
+  async start(
+    allowedOutputRoots?: string[],
+    scrapeEnvExtras: PythonSpawnEnvExtras = {}
+  ): Promise<{ success: boolean; error?: string }> {
     if (this.status.running) {
       return { success: true }
     }
@@ -133,7 +236,8 @@ export class PythonBridge {
         PYTHONUNBUFFERED: '1',
         API_HOST: this.config.host,
         API_PORT: port.toString(),
-        NODE_ENV: this.isDev ? 'development' : 'production'
+        NODE_ENV: this.isDev ? 'development' : 'production',
+        ...scrapeEnvExtras,
       }
       if (roots.length > 0) {
         env.YOUTUBE_SCRAPE_OUTPUT_ROOTS = roots.join(path.delimiter)

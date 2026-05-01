@@ -1,0 +1,39 @@
+{
+  "schema_version": "1",
+  "kind": "comments",
+  "data": {
+    "video_id": "abc123xyz01",
+    "total_count": 3,
+    "top_level_count": 2,
+    "comments": [
+      {
+        "comment_id": "c1",
+        "text": "Great Python tutorial thanks",
+        "author": "Alice",
+        "published_at": "2024-06-01T12:00:00+00:00",
+        "like_count": 10,
+        "is_reply": false,
+        "replies": [
+          {
+            "comment_id": "c1.r1",
+            "text": "Agreed totally",
+            "author": "Bob",
+            "published_at": "2024-06-02T08:00:00+00:00",
+            "like_count": 2,
+            "is_reply": true,
+            "parent_comment_id": "c1"
+          }
+        ]
+      },
+      {
+        "comment_id": "c2",
+        "text": "Bad audio quality",
+        "author": "Charlie",
+        "published_at": "2024-06-03T00:00:00+00:00",
+        "like_count": 0,
+        "is_reply": false,
+        "replies": []
+      }
+    ]
+  }
+}

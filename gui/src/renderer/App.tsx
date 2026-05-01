@@ -10,10 +10,12 @@ import VideoGalleryView from './components/VideoGalleryView'
 import { GalleryFloatingPlayer } from './components/GalleryFloatingPlayer'
 import SettingsView from './components/SettingsView'
 import DebugView from './components/DebugView'
+import AnalyticsView from './components/AnalyticsView'
 import Header from './components/Header'
 import ServerStatusBar from './components/ServerStatusBar'
 import {
   useAppStore,
+  hydrateDownloadSpawnSettingsFromStore,
   hydrateOutputDirectoryFromStore,
   hydrateThemeFromStore,
   hydrateUiFontSizeFromStore,
@@ -28,7 +30,7 @@ import {
 import { useDashboardTrackerStore } from './stores/dashboardTrackerStore'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 
-type View = 'dashboard' | 'scrape' | 'jobs' | 'results' | 'gallery' | 'settings' | 'debug'
+type View = 'dashboard' | 'scrape' | 'jobs' | 'results' | 'gallery' | 'analytics' | 'settings' | 'debug'
 
 type NavigateOptions = { preserveScrapeOptions?: boolean }
 
@@ -58,6 +60,7 @@ const App: React.FC = () => {
     hydrateOutputDirectoryFromStore()
     hydrateThemeFromStore()
     hydrateUiFontSizeFromStore()
+    hydrateDownloadSpawnSettingsFromStore()
     hydrateScrapeJobsFromStore()
     void useDashboardTrackerStore.getState().hydrate()
   }, [])
@@ -123,6 +126,8 @@ const App: React.FC = () => {
         return <ResultsView />
       case 'gallery':
         return <VideoGalleryView onNavigateToJobs={() => navigate('jobs')} />
+      case 'analytics':
+        return <AnalyticsView onNavigateToGallery={() => navigate('gallery')} />
       case 'settings':
         return <SettingsView />
       case 'debug':

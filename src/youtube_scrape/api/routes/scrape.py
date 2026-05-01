@@ -1,9 +1,10 @@
 """Scrape endpoints for the API."""
 
+import asyncio
+import json
 import logging
 import os
 import uuid
-import json
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Literal, cast
@@ -116,8 +117,24 @@ async def send_step_progress(job_id: str, operation_index: int, operation_count:
     await manager.send_progress(job_id, progress, message)
 
 
+_SCRAPE_JOB_SEM: asyncio.Semaphore | None = None
+
+
+def _scrape_job_concurrency_sem() -> asyncio.Semaphore:
+    """Limit how many scrape pipelines run at once (browser + I/O); extra jobs wait for a slot."""
+    global _SCRAPE_JOB_SEM
+    if _SCRAPE_JOB_SEM is None:
+        _SCRAPE_JOB_SEM = asyncio.Semaphore(max(1, Settings().max_concurrent_scrape_jobs))
+    return _SCRAPE_JOB_SEM
+
+
 async def run_scrape_job(job_id: str, request: ScrapeVideoRequest) -> None:
     """Run the scrape job in background."""
+    async with _scrape_job_concurrency_sem():
+        await _run_scrape_job_impl(job_id, request)
+
+
+async def _run_scrape_job_impl(job_id: str, request: ScrapeVideoRequest) -> None:
     jobs = get_job_store()
     manager = get_websocket_manager()
 

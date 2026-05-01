@@ -13,6 +13,7 @@ import {
   Zap,
   MessageSquare,
   HardDrive,
+  BarChart3,
 } from 'lucide-react'
 import { useScrapeStore } from '../stores/scrapeStore'
 import { useDashboardTrackerStore } from '../stores/dashboardTrackerStore'
@@ -21,7 +22,7 @@ const RECENT_ACTIVITY_LIMIT = 3
 
 interface DashboardProps {
   onNavigate: (
-    view: 'scrape' | 'jobs' | 'results',
+    view: 'scrape' | 'jobs' | 'results' | 'analytics',
     options?: { preserveScrapeOptions?: boolean }
   ) => void
 }
@@ -160,6 +161,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
+              <QuickAction
+                icon={BarChart3}
+                label="Open Analytics"
+                onClick={() => onNavigate('analytics')}
+              />
               <QuickAction
                 icon={Youtube}
                 label="Scrape Video MetaData"

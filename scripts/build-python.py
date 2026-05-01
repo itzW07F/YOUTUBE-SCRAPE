@@ -46,6 +46,16 @@ def build_python_backend():
         "--hidden-import", "pydantic",
         "--hidden-import", "yaml",
         "--hidden-import", "websockets",
+        "--hidden-import", "api.routes.analytics",
+        "--hidden-import", "youtube_scrape.application.analytics_snapshot",
+        "--hidden-import", "youtube_scrape.application.analytics_ollama_report",
+        "--hidden-import", "youtube_scrape.application.analytics_gui_llm_resolve",
+        "--hidden-import", "youtube_scrape.domain.analytics_models",
+        "--hidden-import", "youtube_scrape.domain.analytics_aggregate",
+        "--hidden-import", "youtube_scrape.adapters.analytics_artifacts",
+        "--hidden-import", "youtube_scrape.adapters.ollama_client",
+        "--hidden-import", "youtube_scrape.adapters.llm_errors",
+        "--hidden-import", "youtube_scrape.adapters.llm_providers",
         # Data files
         "--add-data", f"src{os.pathsep}src",
         # Entry point

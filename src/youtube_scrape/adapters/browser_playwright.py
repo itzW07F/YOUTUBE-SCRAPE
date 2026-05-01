@@ -476,16 +476,56 @@ class CamoufoxBrowserSession(BrowserSession):
             await asyncio.sleep(tail)
 
     async def _dom_watch_public_comment_count(self, page: Page) -> int | None:
-        """Read total comment count from hydrated ``ytd-comments-header-renderer`` (not in static ytInitialData)."""
+        """Read total comment count from hydrated comments header (not in static ytInitialData).
+
+        YouTube nests count nodes under polymer shadow roots; ``document.querySelector`` from the main
+        document does not traverse into those shadows, so we depth-first walk shadows and probe
+        common selectors before parsing the visible heading text.
+        """
+        _dom_comment_total_js = r"""() => {
+          function traverse(root, visit) {
+            visit(root);
+            const descendants = root.querySelectorAll('*');
+            for (let i = 0; i < descendants.length; i++) {
+              const el = descendants[i];
+              if (el && el.shadowRoot) {
+                traverse(el.shadowRoot, visit);
+              }
+            }
+          }
+          const selectors = [
+            'h2#count',
+            '#count',
+            'yt-formatted-string#count',
+            '[id="count-text"]',
+          ];
+          let found = null;
+          traverse(document, (scope) => {
+            if (found) {
+              return;
+            }
+            for (let s = 0; s < selectors.length; s++) {
+              try {
+                const node = scope.querySelector(selectors[s]);
+                if (!node) {
+                  continue;
+                }
+                const t = (node.innerText || node.textContent || '')
+                  .replace(/\s+/g, ' ')
+                  .trim();
+                if (t) {
+                  found = t;
+                  return;
+                }
+              } catch (e) {
+                void e;
+              }
+            }
+          });
+          return found;
+        }"""
         try:
-            raw = await page.evaluate(
-                """() => {
-                  const h = document.querySelector('ytd-comments-header-renderer h2#count');
-                  if (!h) return null;
-                  const t = (h.innerText || '').replace(/\\s+/g, ' ').trim();
-                  return t || null;
-                }"""
-            )
+            raw = await page.evaluate(_dom_comment_total_js)
         except Exception:
             log.debug("dom_comment_count_eval_failed", exc_info=True)
             return None

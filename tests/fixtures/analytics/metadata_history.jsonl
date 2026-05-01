@@ -1,0 +1,2 @@
+{"schema_version": "1", "captured_at": "2025-01-01T00:00:00Z", "video_id": "abc123xyz01", "output_dir": "/tmp/x", "metrics": {"view_count": 900, "like_count": 40, "dislike_count": 5, "comment_count": 90}}
+{"schema_version": "1", "captured_at": "2025-02-01T00:00:00Z", "video_id": "abc123xyz01", "output_dir": "/tmp/x", "metrics": {"view_count": 1000, "like_count": 50, "dislike_count": 2, "comment_count": 100}}

@@ -9,22 +9,31 @@ import {
   Settings,
   Terminal,
   Youtube,
+  BarChart3,
 } from 'lucide-react'
+
+type SidebarViewId =
+  | 'dashboard'
+  | 'scrape'
+  | 'jobs'
+  | 'results'
+  | 'gallery'
+  | 'analytics'
+  | 'settings'
+  | 'debug'
 
 interface SidebarProps {
   currentView: string
-  onNavigate: (
-    view: 'dashboard' | 'scrape' | 'jobs' | 'results' | 'gallery' | 'settings' | 'debug',
-    options?: { preserveScrapeOptions?: boolean }
-  ) => void
+  onNavigate: (view: SidebarViewId, options?: { preserveScrapeOptions?: boolean }) => void
 }
 
-const navItems = [
+const navItems: Array<{ id: SidebarViewId; label: string; icon: typeof LayoutDashboard }> = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'scrape', label: 'New Scrape', icon: Play },
   { id: 'jobs', label: 'Scrape Jobs', icon: ListTodo },
   { id: 'results', label: 'Results', icon: FolderOpen },
   { id: 'gallery', label: 'Video Gallery', icon: Clapperboard },
+  { id: 'analytics', label: 'Analytics', icon: BarChart3 },
   { id: 'settings', label: 'Settings', icon: Settings },
   { id: 'debug', label: 'Debug', icon: Terminal },
 ]
@@ -63,7 +72,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => {
             return (
               <li key={item.id}>
                 <button
-                  onClick={() => onNavigate(item.id as SidebarProps['onNavigate'] extends (v: infer U) => void ? U : never)}
+                  onClick={() => onNavigate(item.id)}
                   className={`
                     w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group
                     ${isActive

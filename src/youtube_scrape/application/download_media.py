@@ -152,6 +152,12 @@ def _needs_mp4_ftyp_guard(chosen: dict[str, Any]) -> bool:
     return head == "video/mp4" or head == "audio/mp4"
 
 
+def _ffmpeg_optional_thread_prefix(ffmpeg_threads: int) -> list[str]:
+    if ffmpeg_threads <= 0:
+        return []
+    return ["-threads", str(min(ffmpeg_threads, 64))]
+
+
 def _try_ffmpeg_repair_fmp4_fragment(in_path: Path) -> tuple[Path | None, str]:
     """Best-effort remux; unwraps UMP first, then repairs with ffmpeg.
 
@@ -307,27 +313,29 @@ def _maybe_prepend_dash_init(
     return init + data, True
 
 
-def _ffmpeg_encode_file_to_mp3(src_path: Path, dest: Path) -> None:
+def _ffmpeg_encode_file_to_mp3(src_path: Path, dest: Path, *, ffmpeg_threads: int = 0) -> None:
     if shutil.which("ffmpeg") is None:
         msg = "ffmpeg is not on PATH; install ffmpeg or use audio_encoding=container"
         raise YouTubeScrapeError(msg, details="ffmpeg_missing")
+    argv = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-y",
+        *_ffmpeg_optional_thread_prefix(ffmpeg_threads),
+        "-i",
+        str(src_path),
+        "-vn",
+        "-c:a",
+        "libmp3lame",
+        "-q:a",
+        "2",
+        str(dest),
+    ]
     proc = subprocess.run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-nostdin",
-            "-y",
-            "-i",
-            str(src_path),
-            "-vn",
-            "-c:a",
-            "libmp3lame",
-            "-q:a",
-            "2",
-            str(dest),
-        ],
+        argv,
         check=False,
         capture_output=True,
         text=True,
@@ -339,7 +347,13 @@ def _ffmpeg_encode_file_to_mp3(src_path: Path, dest: Path) -> None:
         raise YouTubeScrapeError(msg, details=tail[:2000] if tail else "ffmpeg_nonzero")
 
 
-def _ffmpeg_encode_bytes_to_mp3(src_bytes: bytes, dest: Path, input_suffix: str) -> None:
+def _ffmpeg_encode_bytes_to_mp3(
+    src_bytes: bytes,
+    dest: Path,
+    input_suffix: str,
+    *,
+    ffmpeg_threads: int = 0,
+) -> None:
     if shutil.which("ffmpeg") is None:
         msg = "ffmpeg is not on PATH; install ffmpeg or use audio_encoding=container"
         raise YouTubeScrapeError(msg, details="ffmpeg_missing")
@@ -348,23 +362,25 @@ def _ffmpeg_encode_bytes_to_mp3(src_bytes: bytes, dest: Path, input_suffix: str)
         tmp.flush()
         tmp_path = Path(tmp.name)
     try:
+        argv = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-y",
+            *_ffmpeg_optional_thread_prefix(ffmpeg_threads),
+            "-i",
+            str(tmp_path),
+            "-vn",
+            "-c:a",
+            "libmp3lame",
+            "-q:a",
+            "2",
+            str(dest),
+        ]
         proc = subprocess.run(
-            [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-nostdin",
-                "-y",
-                "-i",
-                str(tmp_path),
-                "-vn",
-                "-c:a",
-                "libmp3lame",
-                "-q:a",
-                "2",
-                str(dest),
-            ],
+            argv,
             check=False,
             capture_output=True,
             text=True,
@@ -1045,7 +1061,12 @@ class DownloadMediaService:
                 dest = output_path
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 src_sz = staged_media.stat().st_size
-                await asyncio.to_thread(_ffmpeg_encode_file_to_mp3, staged_media, dest)
+                await asyncio.to_thread(
+                    _ffmpeg_encode_file_to_mp3,
+                    staged_media,
+                    dest,
+                    ffmpeg_threads=self._settings.ffmpeg_threads,
+                )
                 staged_media.unlink(missing_ok=True)
                 bytes_written = output_path.stat().st_size
                 source_bytes_for_payload = src_sz
@@ -1072,7 +1093,13 @@ class DownloadMediaService:
                 dest = output_path
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 suffix = _ffmpeg_input_suffix(chosen.get("mimeType"))
-                await asyncio.to_thread(_ffmpeg_encode_bytes_to_mp3, data, dest, suffix)
+                await asyncio.to_thread(
+                    _ffmpeg_encode_bytes_to_mp3,
+                    data,
+                    dest,
+                    suffix,
+                    ffmpeg_threads=self._settings.ffmpeg_threads,
+                )
                 bytes_written = dest.stat().st_size
                 source_bytes_for_payload = len(data)
             else:

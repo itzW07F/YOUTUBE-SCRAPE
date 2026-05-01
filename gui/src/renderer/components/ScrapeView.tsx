@@ -13,13 +13,22 @@ import {
   ChevronUp,
   AlertCircle,
   Check,
+  ListOrdered,
 } from 'lucide-react'
 import { useScrapeStore } from '../stores/scrapeStore'
 import { useAppStore } from '../stores/appStore'
 import toast from 'react-hot-toast'
 
 type ScrapeOperation = 'video' | 'comments' | 'transcript' | 'thumbnails' | 'download'
-type AppView = 'dashboard' | 'scrape' | 'jobs' | 'results' | 'gallery' | 'settings' | 'debug'
+type AppView =
+  | 'dashboard'
+  | 'scrape'
+  | 'jobs'
+  | 'results'
+  | 'gallery'
+  | 'analytics'
+  | 'settings'
+  | 'debug'
 
 interface ScrapeViewProps {
   onNavigate: (view: AppView, options?: { preserveScrapeOptions?: boolean }) => void
@@ -59,6 +68,8 @@ function isAllScrapeTargetsOn(
 
 const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
   const [url, setUrl] = useState('')
+  const [batchMode, setBatchMode] = useState(false)
+  const [batchText, setBatchText] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   
@@ -76,71 +87,155 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    const normalized = normalizeYoutubeInput(url)
-    if (!normalized) {
-      toast.error('Please enter a valid YouTube URL or video ID')
-      return
-    }
-
     if (!isServerRunning || !serverUrl) {
       toast.error('API server is not running')
       return
     }
 
-    setIsSubmitting(true)
+    const operations = selectedOperations(scrapeOptions)
+    if (operations.length === 0) {
+      toast.error('Select at least one scrape target')
+      return
+    }
 
-    try {
-      const operations = selectedOperations(scrapeOptions)
-      if (operations.length === 0) {
-        toast.error('Select at least one scrape target')
+    if (!batchMode) {
+      const normalized = normalizeYoutubeInput(url)
+      if (!normalized) {
+        toast.error('Please enter a valid YouTube URL or video ID')
         return
       }
+      setIsSubmitting(true)
+      try {
+        await startScrapeForUrl(normalized, { quiet: false })
+        setUrl('')
+        onNavigate('jobs')
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to start scrape')
+      } finally {
+        setIsSubmitting(false)
+      }
+      return
+    }
 
-      const response = await fetch(`${serverUrl}/scrape/video`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: normalized,
-          include_video: scrapeOptions.includeVideo,
-          include_comments: scrapeOptions.includeComments,
-          include_transcript: scrapeOptions.includeTranscript,
-          include_thumbnails: scrapeOptions.includeThumbnails,
-          include_download: scrapeOptions.includeDownload,
-          max_comments: scrapeOptions.maxComments,
-          transcript_format: scrapeOptions.transcriptFormat,
-          video_quality: scrapeOptions.videoQuality,
-        }),
-      })
+    const rawPieces = extractBatchYoutubeEntries(batchText)
+    const normalizedUrls: string[] = []
+    const invalidPieces: string[] = []
+    for (const raw of rawPieces) {
+      const trimmed = raw.trim()
+      const n = normalizeYoutubeInput(trimmed)
+      if (n) {
+        normalizedUrls.push(n)
+      } else if (trimmed && !trimmed.startsWith('#')) {
+        invalidPieces.push(trimmed)
+      }
+    }
+    const unique = [...new Set(normalizedUrls)]
 
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.detail || 'Failed to start scrape')
+    if (unique.length === 0) {
+      toast.error(
+        invalidPieces.length
+          ? `No valid entries (${invalidPieces.length} invalid)`
+          : 'Add at least one URL or ID per line (# starts a comment line)'
+      )
+      return
+    }
+
+    setIsSubmitting(true)
+    try {
+      let ok = 0
+      let fail = 0
+      let lastFailure: Error | null = null
+      for (const normalized of unique) {
+        try {
+          await startScrapeForUrl(normalized, {
+            quiet: true,
+          })
+          ok++
+        } catch (error) {
+          fail++
+          lastFailure = error instanceof Error ? error : new Error(String(error))
+        }
       }
 
-      const data = await response.json()
       const isFull = isAllScrapeTargetsOn(scrapeOptions)
+      if (ok === 1 && fail === 0) {
+        toast.success(isFull ? 'Full scrape started!' : 'Scrape job started!')
+      } else if (fail === 0) {
+        toast.success(`Queued ${ok} scrape job${ok === 1 ? '' : 's'}`)
+      } else if (ok === 0) {
+        toast.error(lastFailure?.message ?? 'Could not queue any scrape jobs')
+      } else {
+        toast(
+          `${ok} job${ok === 1 ? '' : 's'} queued, ${fail} failed.${lastFailure ? ` Last: ${lastFailure.message}` : ''}`
+        )
+      }
 
-      addJob({
-        id: data.job_id,
-        url: normalized,
-        status: 'running',
-        progress: 0,
-        type: operations.length === 1 ? operations[0] : 'all',
-        operations,
-        outputDir: data.output_dir,
-        startedAt: new Date().toISOString(),
-      })
+      if (invalidPieces.length > 0) {
+        toast(`${invalidPieces.length} entr${invalidPieces.length === 1 ? 'y' : 'ies'} skipped (invalid format)`)
+      }
 
-      setActiveJob(data.job_id)
-      setPendingAutoExpandJobId(data.job_id)
-      toast.success(isFull ? 'Full scrape started!' : 'Scrape job started!')
-      setUrl('')
+      setBatchText('')
       onNavigate('jobs')
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to start scrape')
     } finally {
       setIsSubmitting(false)
     }
+  }
+
+  const startScrapeForUrl = async (normalized: string, options?: { quiet?: boolean }) => {
+    if (!serverUrl) {
+      throw new Error('API server is not running')
+    }
+
+    const response = await fetch(`${serverUrl}/scrape/video`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: normalized,
+        include_video: scrapeOptions.includeVideo,
+        include_comments: scrapeOptions.includeComments,
+        include_transcript: scrapeOptions.includeTranscript,
+        include_thumbnails: scrapeOptions.includeThumbnails,
+        include_download: scrapeOptions.includeDownload,
+        max_comments: scrapeOptions.maxComments,
+        transcript_format: scrapeOptions.transcriptFormat,
+        video_quality: scrapeOptions.videoQuality,
+      }),
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error((error as { detail?: string }).detail || 'Failed to start scrape')
+    }
+
+    const data = (await response.json()) as { job_id?: string; output_dir?: string }
+    const jobId = String(data.job_id ?? '')
+    const outputDir = data.output_dir
+    if (!jobId || typeof outputDir !== 'string') {
+      throw new Error('Invalid response when starting scrape')
+    }
+
+    const operations = selectedOperations(scrapeOptions)
+    const isFull = isAllScrapeTargetsOn(scrapeOptions)
+
+    addJob({
+      id: jobId,
+      url: normalized,
+      status: 'running',
+      progress: 0,
+      type: operations.length === 1 ? operations[0] : 'all',
+      operations,
+      outputDir,
+      startedAt: new Date().toISOString(),
+    })
+
+    setActiveJob(jobId)
+    setPendingAutoExpandJobId(jobId)
+
+    if (!options?.quiet) {
+      toast.success(isFull ? 'Full scrape started!' : 'Scrape job started!')
+    }
+
+    return { jobId, outputDir }
   }
 
   const toggleOption = (key: keyof typeof scrapeOptions) => {
@@ -157,6 +252,12 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
 
   const fullScrapeActive = isAllScrapeTargetsOn(scrapeOptions)
   const hasScrapeTargets = selectedOperations(scrapeOptions).length > 0
+  const singleReady = !!url.trim() && isValidYoutubeInput(url)
+  const batchReady = !!batchText.trim()
+  const canSubmit =
+    isServerRunning &&
+    hasScrapeTargets &&
+    (batchMode ? batchReady : singleReady)
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -165,41 +266,87 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
         animate={{ opacity: 1, y: 0 }}
         className="glass-card gradient-border p-8"
       >
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-neon-blue to-neon-purple flex items-center justify-center">
-            <Play className="w-6 h-6 text-white" />
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-neon-blue to-neon-purple flex items-center justify-center">
+              <Play className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-display font-bold text-white">New Scrape</h2>
+              <p className="text-space-400">
+                Single video or{' '}
+                <span className="text-neon-cyan">batch list</span> — same options apply to each job.
+              </p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-2xl font-display font-bold text-white">New Scrape</h2>
-            <p className="text-space-400">Enter a YouTube URL or video ID to begin extraction</p>
-          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setBatchMode((b) => !b)
+            }}
+            className={`flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium transition-colors ${
+              batchMode
+                ? 'border-neon-cyan/50 bg-neon-cyan/10 text-white'
+                : 'border-glass-border bg-white/5 text-space-300 hover:bg-white/[0.07]'
+            }`}
+          >
+            <ListOrdered className="h-4 w-4 text-neon-cyan" />
+            {batchMode ? 'Batch mode on' : 'Batch URLs / IDs'}
+          </button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* URL Input */}
+          {/* URL or batch list */}
           <div>
-            <label className="block text-sm font-medium text-space-200 mb-2">
-              YouTube URL or video ID
-            </label>
-            <div className="relative">
-              <Youtube className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-space-400" />
-              <input
-                type="text"
-                inputMode="url"
-                autoComplete="off"
-                spellCheck={false}
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://www.youtube.com/watch?v=… or dQw4w9WgXcQ"
-                className="futuristic-input w-full !pl-14 pr-4 py-4 text-lg"
-                disabled={isSubmitting}
-              />
-            </div>
-            {url && !isValidYoutubeInput(url) && (
-              <p className="mt-2 text-sm text-rose-400 flex items-center gap-1">
-                <AlertCircle className="w-4 h-4" />
-                Please enter a valid YouTube URL or video ID
-              </p>
+            {!batchMode ? (
+              <>
+                <label className="block text-sm font-medium text-space-200 mb-2">
+                  YouTube URL or video ID
+                </label>
+                <div className="relative">
+                  <Youtube className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-space-400" />
+                  <input
+                    type="text"
+                    inputMode="url"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    placeholder="https://www.youtube.com/watch?v=… or dQw4w9WgXcQ"
+                    className="futuristic-input w-full !pl-14 pr-4 py-4 text-lg"
+                    disabled={isSubmitting}
+                  />
+                </div>
+                {url && !isValidYoutubeInput(url) && (
+                  <p className="mt-2 text-sm text-rose-400 flex items-center gap-1">
+                    <AlertCircle className="w-4 h-4" />
+                    Please enter a valid YouTube URL or video ID
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                <label className="block text-sm font-medium text-space-200 mb-2">
+                  Multiple URLs or video IDs
+                </label>
+                <textarea
+                  value={batchText}
+                  onChange={(e) => setBatchText(e.target.value)}
+                  disabled={isSubmitting}
+                  rows={10}
+                  spellCheck={false}
+                  placeholder={
+                    `One per line — comments start with #\n\n` +
+                    `https://www.youtube.com/watch?v=dQw4w9WgXcQ\n` +
+                    `dQw4w9WgXcQ\n` +
+                    `https://youtu.be/VIDEO_ID_HERE`
+                  }
+                  className="futuristic-input w-full min-h-[14rem] resize-y px-4 py-3 font-mono text-sm leading-relaxed"
+                />
+                <p className="mt-2 text-xs text-space-500">
+                  Duplicates removed after normalization. Separate videos with commas on one line — they are split.
+                </p>
+              </>
             )}
           </div>
 
@@ -356,16 +503,10 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
           <div className="pt-4 space-y-3">
             <button
               type="submit"
-              disabled={
-                isSubmitting ||
-                !url ||
-                !isValidYoutubeInput(url) ||
-                !isServerRunning ||
-                !hasScrapeTargets
-              }
+              disabled={isSubmitting || !canSubmit}
               className={`
                 w-full py-4 rounded-xl font-semibold text-lg flex items-center justify-center gap-2
-                ${isSubmitting || !url || !isValidYoutubeInput(url) || !isServerRunning || !hasScrapeTargets
+                ${isSubmitting || !canSubmit
                   ? 'bg-space-700 text-space-400 cursor-not-allowed'
                   : 'futuristic-btn futuristic-btn-primary'
                 }
@@ -374,12 +515,12 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
               {isSubmitting ? (
                 <>
                   <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Starting Scrape…
+                  {batchMode ? 'Queuing jobs…' : 'Starting Scrape…'}
                 </>
               ) : (
                 <>
                   <Play className="w-5 h-5" />
-                  Start Scraping
+                  {batchMode ? 'Start batch scrape' : 'Start Scraping'}
                 </>
               )}
             </button>
@@ -388,7 +529,12 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
                 API server is not running. Please wait for it to start.
               </p>
             )}
-            {isServerRunning && url && isValidYoutubeInput(url) && !hasScrapeTargets && (
+            {isServerRunning && !batchMode && url && isValidYoutubeInput(url) && !hasScrapeTargets && (
+              <p className="text-sm text-amber-200/90 text-center">
+                Choose at least one target under What to Scrape
+              </p>
+            )}
+            {isServerRunning && batchMode && batchReady && !hasScrapeTargets && (
               <p className="text-sm text-amber-200/90 text-center">
                 Choose at least one target under What to Scrape
               </p>
@@ -423,6 +569,27 @@ function withHttpsSchemeIfNeeded(trimmed: string): string {
     return `https://${trimmed}`
   }
   return trimmed
+}
+
+/** Expand pasted batch textarea: newline-separated rows; commas split IDs on one line; # begins comment. */
+function extractBatchYoutubeEntries(raw: string): string[] {
+  const out: string[] = []
+  for (const segment of raw.split(/[\r\n]+/)) {
+    const line = segment.trim()
+    if (!line || line.startsWith('#')) {
+      continue
+    }
+    const pieces = line.includes(',')
+      ? line.split(',').map((p) => p.trim()).filter(Boolean)
+      : [line]
+    for (const p of pieces) {
+      if (!p || p.startsWith('#')) {
+        continue
+      }
+      out.push(withHttpsSchemeIfNeeded(p))
+    }
+  }
+  return out
 }
 
 function isValidYoutubeUrl(s: string): boolean {
