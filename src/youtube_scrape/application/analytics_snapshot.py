@@ -57,6 +57,7 @@ def video_metrics_from_metadata(meta: dict[str, Any]) -> VideoMetricsSummary:
         video_id=_meta_str(meta, "video_id"),
         title=_meta_str(meta, "title"),
         channel_title=_meta_str(meta, "channel_title"),
+        description=_meta_str(meta, "description", "short_description"),
         published_at=_meta_str(meta, "published_at"),
         view_count=_meta_int(meta, "view_count"),
         like_count=_meta_int(meta, "like_count"),

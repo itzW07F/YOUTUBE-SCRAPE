@@ -54,6 +54,8 @@ def test_build_analytics_snapshot(analytics_output: Path) -> None:
     assert snap.video_metrics is not None
     assert snap.video_metrics.video_id == "abc123xyz01"
     assert snap.video_metrics.view_count == 1000
+    assert snap.video_metrics.comment_count == 100
+    assert snap.video_metrics.description == "Fixture short description for analytics video."
     assert len(snap.metadata_history) == 2
     assert snap.metadata_history[0].view_count == 900
     assert snap.comment_stats is not None

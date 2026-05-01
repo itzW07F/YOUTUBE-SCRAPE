@@ -24,6 +24,7 @@ class VideoMetricsSummary(BaseModel):
     video_id: str | None = None
     title: str | None = None
     channel_title: str | None = None
+    description: str | None = None
     published_at: str | None = None
     view_count: int | None = None
     like_count: int | None = None

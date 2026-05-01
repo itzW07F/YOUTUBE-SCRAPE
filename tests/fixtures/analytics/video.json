@@ -11,7 +11,8 @@
       "dislike_count": 2,
       "comment_count": 100,
       "duration_seconds": 120,
-      "published_at": "2024-01-01T00:00:00+00:00"
+      "published_at": "2024-01-01T00:00:00+00:00",
+      "description": "Fixture short description for analytics video."
     },
     "caption_tracks": [],
     "stream_formats_preview": [],

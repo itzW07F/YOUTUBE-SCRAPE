@@ -1,6 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { BarChart3, Loader2, RefreshCw, Sparkles, LineChart, AlertTriangle } from 'lucide-react'
+import {
+  AlertTriangle,
+  BarChart3,
+  ChevronDown,
+  ChevronRight,
+  LineChart,
+  Loader2,
+  RefreshCw,
+  Sparkles,
+} from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useScrapeStore } from '../stores/scrapeStore'
 import { useAppStore } from '../stores/appStore'
@@ -41,6 +50,7 @@ interface VideoMetricsSummary {
   video_id?: string | null
   title?: string | null
   channel_title?: string | null
+  description?: string | null
   published_at?: string | null
   view_count?: number | null
   like_count?: number | null
@@ -114,6 +124,54 @@ interface OllamaReportPayload {
 
 interface AnalyticsViewProps {
   onNavigateToGallery: () => void
+}
+
+function CollapsibleSection({
+  title,
+  subtitle,
+  defaultOpen = true,
+  className,
+  contentClassName = 'p-5',
+  children,
+  headerRight,
+  compact = false,
+}: {
+  title: React.ReactNode
+  subtitle?: React.ReactNode
+  defaultOpen?: boolean
+  className?: string
+  contentClassName?: string
+  children: React.ReactNode
+  headerRight?: React.ReactNode
+  /** Smaller header + type scale for nested blocks (e.g. LLM brief subsections). */
+  compact?: boolean
+}): React.ReactElement {
+  const [open, setOpen] = useState(defaultOpen)
+  const headerPad = compact ? 'px-3 py-2' : 'px-5 py-3'
+  const titleCls = compact ? 'block text-sm font-semibold text-white' : 'block text-lg font-semibold text-white'
+  const chevronCls = compact ? 'h-4 w-4' : 'h-5 w-5'
+  return (
+    <div className={className ?? 'glass-card overflow-hidden'}>
+      <div className={`flex items-start gap-2 border-b border-white/10 ${headerPad} ${headerRight ? 'flex-wrap' : ''}`}>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-1 text-left -mx-2 hover:bg-white/5"
+          aria-expanded={open}
+        >
+          <span className={`mt-0.5 shrink-0 text-space-400 ${compact ? 'mt-px' : ''}`}>
+            {open ? <ChevronDown className={chevronCls} /> : <ChevronRight className={chevronCls} />}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className={titleCls}>{title}</span>
+            {subtitle ? <span className="mt-0.5 block text-xs text-space-500">{subtitle}</span> : null}
+          </span>
+        </button>
+        {headerRight ? <div className="flex shrink-0 flex-wrap items-center gap-2">{headerRight}</div> : null}
+      </div>
+      {open ? <div className={contentClassName}>{children}</div> : null}
+    </div>
+  )
 }
 
 function Sparkline({
@@ -319,7 +377,11 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
         ) : null}
       </div>
 
-      <div className="glass-card p-5 space-y-4">
+      <CollapsibleSection
+        title="Data source"
+        subtitle="Choose a scrape folder and fetch a snapshot from the API."
+        contentClassName="p-5 space-y-4"
+      >
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-[240px] flex-1">
             <label className="block text-xs text-space-400 mb-1">Scrape folder</label>
@@ -376,7 +438,7 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
             {error}
           </pre>
         ) : null}
-      </div>
+      </CollapsibleSection>
 
       {snapshot ? (
         <motion.div
@@ -384,39 +446,61 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
           animate={{ opacity: 1, y: 0 }}
           className="space-y-6"
         >
-          <div className="grid gap-4 lg:grid-cols-2">
-            <div className="glass-card p-5 space-y-3">
-              <h3 className="text-lg font-semibold text-white">Video snapshot</h3>
+          <div className="grid items-start gap-4 lg:grid-cols-2">
+            <CollapsibleSection
+              className="glass-card overflow-hidden"
+              title="Video snapshot"
+              subtitle="Latest metrics from video.json."
+              contentClassName="space-y-3 p-5"
+            >
               {snapshot.video_metrics ? (
-                <ul className="space-y-1 text-sm text-space-300">
-                  <li>
-                    <span className="text-space-500">Title:</span> {snapshot.video_metrics.title ?? '—'}
-                  </li>
-                  <li>
-                    <span className="text-space-500">Channel:</span>{' '}
-                    {snapshot.video_metrics.channel_title ?? '—'}
-                  </li>
-                  <li>
-                    <span className="text-space-500">Views:</span>{' '}
-                    {snapshot.video_metrics.view_count?.toLocaleString() ?? '—'}
-                  </li>
-                  <li>
-                    <span className="text-space-500">Likes / Dislikes:</span>{' '}
-                    {snapshot.video_metrics.like_count?.toLocaleString() ?? '—'} /{' '}
-                    {snapshot.video_metrics.dislike_count?.toLocaleString() ?? '—'}
-                  </li>
-                  <li>
-                    <span className="text-space-500">Public comment total:</span>{' '}
-                    {snapshot.video_metrics.comment_count?.toLocaleString() ?? '—'}
-                  </li>
-                </ul>
+                <div className="space-y-3 text-sm text-space-300">
+                  <ul className="space-y-1">
+                    <li>
+                      <span className="text-space-500">Title:</span> {snapshot.video_metrics.title ?? '—'}
+                    </li>
+                    <li>
+                      <span className="text-space-500">Channel:</span>{' '}
+                      {snapshot.video_metrics.channel_title ?? '—'}
+                    </li>
+                    <li>
+                      <span className="text-space-500">Views:</span>{' '}
+                      {snapshot.video_metrics.view_count?.toLocaleString() ?? '—'}
+                    </li>
+                    <li>
+                      <span className="text-space-500">Likes / Dislikes:</span>{' '}
+                      {snapshot.video_metrics.like_count?.toLocaleString() ?? '—'} /{' '}
+                      {snapshot.video_metrics.dislike_count?.toLocaleString() ?? '—'}
+                    </li>
+                    <li>
+                      <span className="text-space-500">Comment count (YouTube):</span>{' '}
+                      {snapshot.video_metrics.comment_count?.toLocaleString() ?? '—'}
+                    </li>
+                    {snapshot.comment_stats ? (
+                      <li>
+                        <span className="text-space-500">Comments scraped (file):</span>{' '}
+                        {snapshot.comment_stats.total_flat.toLocaleString()}
+                      </li>
+                    ) : null}
+                  </ul>
+                  <div>
+                    <div className="text-space-500">Description</div>
+                    <div className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-white/10 bg-black/20 p-3 text-space-300">
+                      {snapshot.video_metrics.description?.trim() ? snapshot.video_metrics.description : '—'}
+                    </div>
+                  </div>
+                </div>
               ) : (
                 <p className="text-space-500 text-sm">No video.json metadata.</p>
               )}
-            </div>
+            </CollapsibleSection>
 
-            <div className="glass-card p-5">
-              <h3 className="text-lg font-semibold text-white mb-3">Performance over time</h3>
+            <CollapsibleSection
+              className="glass-card overflow-hidden"
+              title="Performance over time"
+              subtitle="Sparklines from metadata_history.jsonl."
+              contentClassName="p-5"
+            >
               {hist.length === 0 ? (
                 <p className="text-sm text-space-500">No metadata history file.</p>
               ) : (
@@ -430,59 +514,71 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
               <p className="mt-3 text-xs text-space-500">
                 Points: {hist.length} (from metadata_history.jsonl). Capture times align with gallery refresh runs.
               </p>
-            </div>
+            </CollapsibleSection>
           </div>
 
           {snapshot.notes.length > 0 ? (
-            <ul className="list-disc space-y-1 pl-5 text-sm text-space-400">
-              {snapshot.notes.map((n) => (
-                <li key={n}>{n}</li>
-              ))}
-            </ul>
+            <CollapsibleSection
+              title="Notes"
+              subtitle="Snapshot warnings and file hints from the API."
+              contentClassName="p-5"
+            >
+              <ul className="list-disc space-y-1 pl-5 text-sm text-space-400">
+                {snapshot.notes.map((n) => (
+                  <li key={n}>{n}</li>
+                ))}
+              </ul>
+            </CollapsibleSection>
           ) : null}
 
           {snapshot.comment_stats ? (
-            <div className="grid gap-4 lg:grid-cols-3">
-              <HorizontalBars buckets={snapshot.comment_stats.like_buckets} title="Comment likes (bucket)" />
-              <div className="rounded-lg border border-white/10 bg-white/5 p-4 lg:col-span-2">
-                <h4 className="text-sm font-semibold text-white">Comments per day (UTC)</h4>
-                {snapshot.comment_stats.volume_by_day.length === 0 ? (
-                  <p className="mt-2 text-sm text-space-500">No dated comments.</p>
-                ) : (
-                  <div className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
-                    {(() => {
-                      const max = Math.max(...snapshot.comment_stats.volume_by_day.map((b) => b.count), 1)
-                      return snapshot.comment_stats.volume_by_day.map((b) => (
-                        <div key={b.bucket_start}>
-                          <div className="flex justify-between text-xs text-space-400">
-                            <span>{b.bucket_start}</span>
-                            <span>{b.count}</span>
+            <CollapsibleSection
+              title="Comment volume & likes"
+              subtitle="Buckets and daily UTC volume from scraped comments."
+              contentClassName="p-5"
+            >
+              <div className="grid gap-4 lg:grid-cols-3">
+                <HorizontalBars buckets={snapshot.comment_stats.like_buckets} title="Comment likes (bucket)" />
+                <div className="rounded-lg border border-white/10 bg-white/5 p-4 lg:col-span-2">
+                  <h4 className="text-sm font-semibold text-white">Comments per day (UTC)</h4>
+                  {snapshot.comment_stats.volume_by_day.length === 0 ? (
+                    <p className="mt-2 text-sm text-space-500">No dated comments.</p>
+                  ) : (
+                    <div className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
+                      {(() => {
+                        const max = Math.max(...snapshot.comment_stats.volume_by_day.map((b) => b.count), 1)
+                        return snapshot.comment_stats.volume_by_day.map((b) => (
+                          <div key={b.bucket_start}>
+                            <div className="flex justify-between text-xs text-space-400">
+                              <span>{b.bucket_start}</span>
+                              <span>{b.count}</span>
+                            </div>
+                            <div className="mt-1 h-2 overflow-hidden rounded-full bg-space-800">
+                              <div
+                                className="h-full rounded-full bg-neon-cyan/80"
+                                style={{ width: `${(b.count / max) * 100}%` }}
+                              />
+                            </div>
                           </div>
-                          <div className="mt-1 h-2 overflow-hidden rounded-full bg-space-800">
-                            <div
-                              className="h-full rounded-full bg-neon-cyan/80"
-                              style={{ width: `${(b.count / max) * 100}%` }}
-                            />
-                          </div>
-                        </div>
-                      ))
-                    })()}
-                  </div>
-                )}
-                <p className="mt-2 text-xs text-space-500">
-                  Flat comments: {snapshot.comment_stats.total_flat}, with timestamp:{' '}
-                  {snapshot.comment_stats.with_published_at}, replies:{' '}
-                  {snapshot.comment_stats.reply_count ?? '—'}
-                </p>
+                        ))
+                      })()}
+                    </div>
+                  )}
+                  <p className="mt-2 text-xs text-space-500">
+                    Flat comments: {snapshot.comment_stats.total_flat}, with timestamp:{' '}
+                    {snapshot.comment_stats.with_published_at}, replies:{' '}
+                    {snapshot.comment_stats.reply_count ?? '—'}
+                  </p>
+                </div>
               </div>
-            </div>
+            </CollapsibleSection>
           ) : null}
 
           {snapshot.comment_stats && snapshot.comment_stats.top_authors.length > 0 ? (
-            <div className="glass-card overflow-hidden p-0">
-              <div className="border-b border-white/10 px-5 py-3">
-                <h3 className="text-lg font-semibold text-white">Top authors (volume)</h3>
-              </div>
+            <CollapsibleSection
+              title="Top authors (volume)"
+              contentClassName="p-0"
+            >
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead className="bg-white/5 text-space-400">
@@ -503,17 +599,15 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
                   </tbody>
                 </table>
               </div>
-            </div>
+            </CollapsibleSection>
           ) : null}
 
           {snapshot.keywords.length > 0 ? (
-            <div className="glass-card overflow-hidden p-0">
-              <div className="border-b border-white/10 px-5 py-3">
-                <h3 className="text-lg font-semibold text-white">Top tokens (English heuristic)</h3>
-                <p className="text-xs text-space-500">
-                  Naïve word frequencies — supplement with the AI brief for themes.
-                </p>
-              </div>
+            <CollapsibleSection
+              title="Top tokens (English heuristic)"
+              subtitle="Naïve word frequencies — supplement with the AI brief for themes."
+              contentClassName="p-0"
+            >
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead className="bg-white/5 text-space-400">
@@ -532,24 +626,21 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
                   </tbody>
                 </table>
               </div>
-            </div>
+            </CollapsibleSection>
           ) : null}
 
-          <div className="glass-card border border-neon-purple/25 p-5 space-y-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h3 className="flex items-center gap-2 text-lg font-semibold text-white">
-                  <Sparkles className="h-5 w-5 text-neon-purple" />
-                  AI macro brief (Ollama)
-                </h3>
-                <p className="mt-1 text-sm text-space-400">
-                  Audience reactions inferred from <strong className="text-space-300">your scraped comments only</strong>{' '}
-                  (themes, tone, splits — language patterns, not clinical diagnoses). Requires local Ollama (
-                  <code className="text-space-300">YOUTUBE_SCRAPE_OLLAMA_*</code>). Use{' '}
-                  <strong className="text-space-300">Force refresh</strong> after updates so prompts apply.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
+          <CollapsibleSection
+            className="glass-card overflow-hidden border border-neon-purple/25"
+            title={
+              <span className="flex items-center gap-2">
+                <Sparkles className="h-5 w-5 text-neon-purple" />
+                AI macro brief (Ollama)
+              </span>
+            }
+            subtitle="Optional LLM synthesis from scraped comments (configure Ollama in Settings)."
+            contentClassName="space-y-4 p-5"
+            headerRight={
+              <>
                 <button
                   type="button"
                   disabled={llmLoading || !serverUrl || !selectedDir}
@@ -567,8 +658,15 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
                 >
                   Force refresh
                 </button>
-              </div>
-            </div>
+              </>
+            }
+          >
+            <p className="text-sm text-space-400">
+              Audience reactions inferred from <strong className="text-space-300">your scraped comments only</strong>{' '}
+              (themes, tone, splits — language patterns, not clinical diagnoses). Requires local Ollama (
+              <code className="text-space-300">YOUTUBE_SCRAPE_OLLAMA_*</code>). Use{' '}
+              <strong className="text-space-300">Force refresh</strong> after updates so prompts apply.
+            </p>
 
             {llmError ? (
               <pre className="whitespace-pre-wrap rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-200">
@@ -577,60 +675,95 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
             ) : null}
 
             {llmReport ? (
-              <div className="space-y-4 rounded-lg border border-white/10 bg-space-900/40 p-4">
+              <div className="space-y-3 rounded-lg border border-white/10 bg-space-900/40 p-4">
                 <p className="text-xs text-space-500">
                   Model {llmReport.model} · {llmReport.generated_at}{' '}
                   {llmReport.from_cache ? '(cache)' : '(fresh)'}
                 </p>
-                <div>
-                  <h4 className="text-sm font-semibold text-neon-blue">Themes</h4>
-                  <ul className="mt-1 list-disc pl-5 text-sm text-space-300">
+                <CollapsibleSection
+                  className="rounded-lg border border-white/10 bg-space-950/30 overflow-hidden"
+                  title="Themes"
+                  defaultOpen
+                  compact
+                  contentClassName="border-t border-white/5 px-4 py-3"
+                >
+                  <ul className="list-disc pl-5 text-sm text-space-300">
                     {llmReport.brief.themes.map((t, i) => (
                       <li key={`${i}-${t}`}>{t}</li>
                     ))}
                   </ul>
+                </CollapsibleSection>
+                <CollapsibleSection
+                  className="rounded-lg border border-white/10 bg-space-950/30 overflow-hidden"
+                  title={<span className="text-neon-blue">Sentiment (overview)</span>}
+                  defaultOpen
+                  compact
+                  contentClassName="border-t border-white/5 px-4 py-3"
+                >
+                  <p className="text-sm text-space-300">{llmReport.brief.sentiment_overview}</p>
+                </CollapsibleSection>
+                <div className="grid items-start gap-3 md:grid-cols-2">
+                  <CollapsibleSection
+                    className="rounded-lg border border-white/10 bg-space-950/30 overflow-hidden"
+                    title={<span className="text-neon-green">Suggestions / requests</span>}
+                    defaultOpen
+                    compact
+                    contentClassName="border-t border-white/5 px-4 py-3"
+                  >
+                    <p className="text-sm text-space-300">{llmReport.brief.suggestions_and_requests}</p>
+                  </CollapsibleSection>
+                  <CollapsibleSection
+                    className="rounded-lg border border-white/10 bg-space-950/30 overflow-hidden"
+                    title={<span className="text-amber-400">Complaints / criticism</span>}
+                    defaultOpen
+                    compact
+                    contentClassName="border-t border-white/5 px-4 py-3"
+                  >
+                    <p className="text-sm text-space-300">{llmReport.brief.complaints_and_criticism}</p>
+                  </CollapsibleSection>
                 </div>
-                <div>
-                  <h4 className="text-sm font-semibold text-neon-blue">Sentiment (overview)</h4>
-                  <p className="mt-1 text-sm text-space-300">{llmReport.brief.sentiment_overview}</p>
-                </div>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div>
-                    <h4 className="text-sm font-semibold text-neon-green">Suggestions / requests</h4>
-                    <p className="mt-1 text-sm text-space-300">{llmReport.brief.suggestions_and_requests}</p>
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-semibold text-amber-400">Complaints / criticism</h4>
-                    <p className="mt-1 text-sm text-space-300">{llmReport.brief.complaints_and_criticism}</p>
-                  </div>
-                </div>
-                <div>
-                  <h4 className="text-sm font-semibold text-neon-purple">Agreements / disagreements</h4>
-                  <p className="mt-1 text-sm text-space-300">{llmReport.brief.agreements_and_disagreements}</p>
-                </div>
+                <CollapsibleSection
+                  className="rounded-lg border border-white/10 bg-space-950/30 overflow-hidden"
+                  title={<span className="text-neon-purple">Agreements / disagreements</span>}
+                  defaultOpen
+                  compact
+                  contentClassName="border-t border-white/5 px-4 py-3"
+                >
+                  <p className="text-sm text-space-300">{llmReport.brief.agreements_and_disagreements}</p>
+                </CollapsibleSection>
                 {llmReport.brief.notable_quotes.length > 0 ? (
-                  <div>
-                    <h4 className="text-sm font-semibold text-space-200">Notable excerpts</h4>
-                    <ul className="mt-1 list-disc pl-5 text-sm italic text-space-400">
+                  <CollapsibleSection
+                    className="rounded-lg border border-white/10 bg-space-950/30 overflow-hidden"
+                    title={<span className="text-space-200">Notable excerpts</span>}
+                    defaultOpen
+                    compact
+                    contentClassName="border-t border-white/5 px-4 py-3"
+                  >
+                    <ul className="list-disc pl-5 text-sm italic text-space-400">
                       {llmReport.brief.notable_quotes.map((q, i) => (
                         <li key={`${i}-${q.slice(0, 24)}`}>{q}</li>
                       ))}
                     </ul>
-                  </div>
+                  </CollapsibleSection>
                 ) : null}
                 {llmReport.brief.caveats.length > 0 ? (
-                  <div>
-                    <h4 className="text-sm font-semibold text-rose-300">Caveats</h4>
-                    <ul className="mt-1 list-disc pl-5 text-sm text-space-400">
+                  <CollapsibleSection
+                    className="rounded-lg border border-white/10 bg-space-950/30 overflow-hidden"
+                    title={<span className="text-rose-300">Caveats</span>}
+                    defaultOpen
+                    compact
+                    contentClassName="border-t border-white/5 px-4 py-3"
+                  >
+                    <ul className="list-disc pl-5 text-sm text-space-400">
                       {llmReport.brief.caveats.map((c, i) => (
                         <li key={`${i}-${c.slice(0, 24)}`}>{c}</li>
                       ))}
                     </ul>
-                  </div>
+                  </CollapsibleSection>
                 ) : null}
               </div>
             ) : null}
-          </div>
+          </CollapsibleSection>
         </motion.div>
       ) : null}
     </div>
