@@ -70,6 +70,24 @@ def test_build_analytics_snapshot_sorts_history_when_jsonl_newest_first(tmp_path
     assert [p.view_count for p in snap.metadata_history] == [900, 1000]
 
 
+def test_backfills_comment_count_from_metadata_history_when_video_json_omits_it(
+    tmp_path: Path,
+) -> None:
+    sub = tmp_path / "no_cc"
+    sub.mkdir(parents=True)
+    shutil.copy(FIXTURE_DIR / "video.json", sub / "video.json")
+    inner = json.loads((sub / "video.json").read_text(encoding="utf-8"))
+    del inner["data"]["metadata"]["comment_count"]
+    (sub / "video.json").write_text(json.dumps(inner, indent=2), encoding="utf-8")
+    shutil.copy(FIXTURE_DIR / "metadata_history.jsonl", sub / "metadata_history.jsonl")
+    shutil.copy(FIXTURE_DIR / "comments.json", sub / "comments.json")
+
+    snap = build_analytics_snapshot(sub)
+    assert snap.video_metrics is not None
+    assert snap.video_metrics.comment_count == 100
+    assert any("comment total was missing from video.json" in n for n in snap.notes)
+
+
 def test_resolve_output_dir_rejects_escape(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
     malicious = Path("/etc/passwd")

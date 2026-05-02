@@ -123,6 +123,28 @@ def sort_metadata_history_chronologically(points: list[MetadataHistoryPoint]) ->
     return [p for _, p in indexed]
 
 
+def backfill_video_metrics_comment_count_from_history(
+    video_metrics: VideoMetricsSummary | None,
+    metadata_history: list[MetadataHistoryPoint],
+    notes: list[str],
+) -> VideoMetricsSummary | None:
+    """When ``video.json`` omits ``comment_count`` (common after some metadata refreshes), use history.
+
+    The watch pipeline often still records the public total in ``metadata_history.jsonl`` rows; analytics
+    should not show a blank YouTube comment total when the trend series has values.
+    """
+    if video_metrics is None or video_metrics.comment_count is not None:
+        return video_metrics
+    for p in reversed(metadata_history):
+        if p.comment_count is not None:
+            notes.append(
+                "YouTube public comment total was missing from video.json; filled from the latest "
+                "metadata_history.jsonl capture that includes it."
+            )
+            return video_metrics.model_copy(update={"comment_count": p.comment_count})
+    return video_metrics
+
+
 def build_analytics_snapshot(output_dir: Path) -> AnalyticsSnapshot:
     """Load artifacts from ``output_dir`` (already validated under output roots)."""
 
@@ -175,6 +197,10 @@ def build_analytics_snapshot(output_dir: Path) -> AnalyticsSnapshot:
                 tl = int(top_level_count) if isinstance(top_level_count, int) else None
                 comment_stats = build_comment_stats(flat, top_level_count=tl)
                 keywords = extract_keywords(flat)
+
+    video_metrics = backfill_video_metrics_comment_count_from_history(
+        video_metrics, metadata_history, notes
+    )
 
     return AnalyticsSnapshot(
         output_dir=str(output_dir),
