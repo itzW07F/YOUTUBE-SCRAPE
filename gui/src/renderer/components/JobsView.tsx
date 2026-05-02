@@ -25,6 +25,7 @@ import {
   LogEntry,
 } from '../stores/scrapeStore'
 import { useAppStore } from '../stores/appStore'
+import { jobIdUsesProgressWebSocket } from '../constants/jobPrefixes'
 
 const JobsView: React.FC = () => {
   const {
@@ -58,11 +59,7 @@ const JobsView: React.FC = () => {
     if (!serverUrl || !isServerRunning) return
 
     jobs.forEach((job) => {
-      if (
-        job.status === 'running' &&
-        job.id.startsWith('gallery-metadata-') === false &&
-        !websockets.has(job.id)
-      ) {
+      if (job.status === 'running' && jobIdUsesProgressWebSocket(job.id) && !websockets.has(job.id)) {
         const ws = new WebSocket(`${serverUrl.replace('http', 'ws')}/ws/progress/${job.id}`)
         
         ws.onmessage = (event) => {

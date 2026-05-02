@@ -20,10 +20,13 @@ from youtube_scrape.application.analytics_ollama_report import (
     macro_brief_is_substantive,
     parse_macro_brief,
 )
-from youtube_scrape.application.analytics_snapshot import build_analytics_snapshot
+from youtube_scrape.application.analytics_snapshot import (
+    build_analytics_snapshot,
+    sort_metadata_history_chronologically,
+)
 from youtube_scrape.application.gallery_metadata_refresh import resolve_output_dir_for_refresh
 from youtube_scrape.domain.analytics_aggregate import comment_corpus_fingerprint, flatten_comment_nodes
-from youtube_scrape.domain.analytics_models import GuiAnalyticsLlmOverlay, OllamaMacroBrief
+from youtube_scrape.domain.analytics_models import GuiAnalyticsLlmOverlay, MetadataHistoryPoint, OllamaMacroBrief
 from youtube_scrape.settings import Settings
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "analytics"
@@ -40,6 +43,31 @@ def analytics_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     resolved = resolve_output_dir_for_refresh(str(sub), [tmp_path.resolve()])
     assert resolved == sub.resolve()
     return sub.resolve()
+
+
+def test_sort_metadata_history_chronologically_reorders_file() -> None:
+    pts = [
+        MetadataHistoryPoint(captured_at="2025-02-01T00:00:00Z", view_count=1000),
+        MetadataHistoryPoint(captured_at="2025-01-01T00:00:00Z", view_count=900),
+    ]
+    got = sort_metadata_history_chronologically(pts)
+    assert [p.view_count for p in got] == [900, 1000]
+
+
+def test_build_analytics_snapshot_sorts_history_when_jsonl_newest_first(tmp_path: Path) -> None:
+    """Lines reversed vs chronological fixture — snapshot must still plot oldest → newest."""
+    sub = tmp_path / "revsub"
+    sub.mkdir(parents=True)
+    lines = [
+        '{"schema_version": "1", "captured_at": "2025-02-01T00:00:00Z", "video_id": "v", "metrics": {"view_count": 1000}}',
+        '{"schema_version": "1", "captured_at": "2025-01-01T00:00:00Z", "video_id": "v", "metrics": {"view_count": 900}}',
+    ]
+    (sub / "metadata_history.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (sub / "video.json").write_text(
+        '{"data": {"metadata": {"video_id": "v", "view_count": 1000}}}', encoding="utf-8"
+    )
+    snap = build_analytics_snapshot(sub)
+    assert [p.view_count for p in snap.metadata_history] == [900, 1000]
 
 
 def test_resolve_output_dir_rejects_escape(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

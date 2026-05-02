@@ -188,14 +188,18 @@ def main() -> None:
     port = int(os.environ.get("API_PORT", args.port))
     
     import uvicorn
-    
-    uvicorn.run(
-        "api.server:app",
-        host=host,
-        port=port,
-        reload=args.reload,
-        log_level="info",
-    )
+
+    # PyInstaller frozen builds cannot resolve the "api.server:app" import string reliably; pass the app object.
+    if getattr(sys, "frozen", False):
+        uvicorn.run(app, host=host, port=port, reload=False, log_level="info")
+    else:
+        uvicorn.run(
+            "api.server:app",
+            host=host,
+            port=port,
+            reload=args.reload,
+            log_level="info",
+        )
 
 
 if __name__ == "__main__":

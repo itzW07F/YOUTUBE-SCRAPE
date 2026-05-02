@@ -51,8 +51,8 @@ video:
 # Comment scraping
 comments:
   enabled: true                      # Scrape comments
-  max_comments: 100                  # Max comments (null = unlimited)
-  fetch_all: false                   # Fetch until exhaustion (with safety cap)
+  max_comments: null                  # Cap when fetch_all is false (null = not used)
+  fetch_all: true                     # All comments up to safety_ceiling
   include_replies: true              # Include reply comments
   max_replies_per_thread: 3          # Max replies per thread (null = unlimited)
   safety_ceiling: 50000              # Hard cap to prevent runaway scraping

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,7 @@ from youtube_scrape.adapters.analytics_artifacts import (
     read_json_file,
     read_metadata_history_jsonl,
 )
+from youtube_scrape.application.comment_snapshot_archive import COMMENT_SNAPSHOTS_SUBDIR
 from youtube_scrape.domain.analytics_aggregate import (
     build_comment_stats,
     extract_keywords,
@@ -89,6 +91,38 @@ def history_points_from_jsonl(rows: list[dict[str, Any]]) -> list[MetadataHistor
     return out
 
 
+def _captured_at_epoch_seconds(captured_at: str) -> float | None:
+    raw = captured_at.strip()
+    if not raw:
+        return None
+    normalized = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+    try:
+        return datetime.fromisoformat(normalized).timestamp()
+    except ValueError:
+        return None
+
+
+def sort_metadata_history_chronologically(points: list[MetadataHistoryPoint]) -> list[MetadataHistoryPoint]:
+    """Sort by ``captured_at`` ascending so trend charts match real time order.
+
+    ``metadata_history.jsonl`` is usually append-only, but merged or hand-edited files may be
+    out of order; analytics must still plot chronologically.
+    """
+    if len(points) <= 1:
+        return points
+    indexed = list(enumerate(points))
+
+    def sort_key(it: tuple[int, MetadataHistoryPoint]) -> tuple[float, int]:
+        i, p = it
+        epoch = _captured_at_epoch_seconds(p.captured_at)
+        if epoch is None:
+            return (float("inf"), i)
+        return (epoch, i)
+
+    indexed.sort(key=sort_key)
+    return [p for _, p in indexed]
+
+
 def build_analytics_snapshot(output_dir: Path) -> AnalyticsSnapshot:
     """Load artifacts from ``output_dir`` (already validated under output roots)."""
 
@@ -110,13 +144,19 @@ def build_analytics_snapshot(output_dir: Path) -> AnalyticsSnapshot:
             notes.append("video.json has no metadata object.")
 
     hist_raw = read_metadata_history_jsonl(hist_path)
-    metadata_history = history_points_from_jsonl(hist_raw)
+    metadata_history = sort_metadata_history_chronologically(history_points_from_jsonl(hist_raw))
     if not metadata_history:
         notes.append("No metadata_history.jsonl — refresh metadata from the gallery to build trend lines.")
     elif len(metadata_history) < 2:
         notes.append("Only one metadata history point — trends need at least two refreshes.")
 
     comments_present = cpath.is_file()
+    snap_dir = output_dir / COMMENT_SNAPSHOTS_SUBDIR
+    if snap_dir.is_dir() and any(snap_dir.glob("comments_*.json")):
+        notes.append(
+            f"Older comment pulls are preserved under {COMMENT_SNAPSHOTS_SUBDIR}/; comments.json is the latest scrape."
+        )
+
     comment_stats = None
     keywords: list[KeywordTerm] = []
 

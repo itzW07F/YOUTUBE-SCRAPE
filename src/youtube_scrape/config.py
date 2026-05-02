@@ -65,11 +65,25 @@ class CommentsConfig(BaseModel):
     """Comment scraping configuration."""
 
     enabled: bool = Field(default=True, description="Scrape comments.")
-    max_comments: int | None = Field(default=100, ge=1, description="Max comments to fetch (null = unlimited).")
-    fetch_all: bool = Field(default=False, description="Fetch until exhaustion (with safety ceiling).")
+    max_comments: int | None = Field(
+        default=None,
+        description="When fetch_all is false, stop after roughly this many comments. Ignored when fetch_all is true.",
+    )
+    fetch_all: bool = Field(
+        default=True,
+        description="Follow continuations until safety_ceiling (recommended; ignores max_comments).",
+    )
     include_replies: bool = Field(default=True, description="Include reply comments.")
     max_replies_per_thread: int | None = Field(default=3, ge=0, description="Max replies per thread (null = unlimited).")
     safety_ceiling: int = Field(default=50000, ge=1, description="Hard cap to prevent runaway scraping.")
+
+    @field_validator("max_comments")
+    @classmethod
+    def max_comments_positive_when_set(cls, v: int | None) -> int | None:
+        if v is not None and v < 1:
+            msg = "max_comments must be >= 1 when set"
+            raise ValueError(msg)
+        return v
 
 
 class TranscriptConfig(BaseModel):

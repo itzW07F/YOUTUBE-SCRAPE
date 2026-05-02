@@ -60,7 +60,7 @@ DEFAULT_PRESETS: List[Preset] = [
             "include_transcript": True,
             "include_thumbnails": True,
             "include_download": False,
-            "max_comments": 500,
+            "max_comments": 0,
         }
     ),
     Preset(

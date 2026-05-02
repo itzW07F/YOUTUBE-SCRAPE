@@ -42,13 +42,14 @@ Electron App
 From the repository root, run the platform setup script:
 
 ```bash
+./setup.sh --help   # options: --skip-gui, --skip-browser, --skip-os-deps, --skip-audit, --skip-preflight, --min-disk-gib N
 ./setup.sh
 ```
 
-Windows PowerShell:
+Windows: from the repository root, double-click `setup-windows.cmd`, or run:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\setup.ps1
+powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
 ```
 
 The setup script creates `.venv`, syncs Python dependencies from `uv.lock`, downloads Camoufox, and installs GUI dependencies with `npm ci`.
@@ -61,6 +62,9 @@ npm ci
 ```
 
 Run in development mode:
+
+- **Windows:** from the repository root, double-click `start-gui.cmd` (or run `.\start-gui.ps1` in PowerShell).
+- **macOS/Linux:** from `gui/` run `npm run dev`.
 
 ```bash
 cd gui

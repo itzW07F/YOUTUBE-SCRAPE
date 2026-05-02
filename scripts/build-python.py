@@ -7,6 +7,7 @@ This creates a standalone executable that can be bundled with the Electron app.
 
 import os
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -46,6 +47,10 @@ def build_python_backend():
         "--hidden-import", "pydantic",
         "--hidden-import", "yaml",
         "--hidden-import", "websockets",
+        "--hidden-import", "camoufox",
+        "--hidden-import", "camoufox.async_api",
+        "--hidden-import", "playwright",
+        "--hidden-import", "playwright.async_api",
         "--hidden-import", "api.routes.analytics",
         "--hidden-import", "youtube_scrape.application.analytics_snapshot",
         "--hidden-import", "youtube_scrape.application.analytics_ollama_report",
@@ -65,12 +70,18 @@ def build_python_backend():
     print(f"Running: {' '.join(cmd)}")
     
     result = subprocess.run(cmd, capture_output=False)
-    
+
     if result.returncode != 0:
         print("ERROR: PyInstaller build failed!")
         return False
-    
-    print(f"Build complete: {dist_dir / 'youtube-scrape-api'}")
+
+    exe_name = "youtube-scrape-api.exe" if sys.platform == "win32" else "youtube-scrape-api"
+    built = dist_dir / exe_name
+    if built.exists() and sys.platform != "win32":
+        built.chmod(built.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        print(f"chmod +x {built}")
+
+    print(f"Build complete: {built}")
     return True
 
 

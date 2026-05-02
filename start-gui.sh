@@ -5,6 +5,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
+PORTABLE_NODE="${XDG_DATA_HOME:-$HOME/.local/share}/youtube-scrape-tools/nodejs-current"
+if [[ -x "$PORTABLE_NODE/bin/node" ]]; then
+  export PATH="$PORTABLE_NODE/bin:$PATH"
+fi
+
 if [[ -x "$ROOT/.venv/bin/python" ]]; then
   export PYTHON_PATH="${PYTHON_PATH:-$ROOT/.venv/bin/python}"
 fi

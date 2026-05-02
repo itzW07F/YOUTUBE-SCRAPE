@@ -7,17 +7,21 @@ import {
   ChevronRight,
   LineChart,
   Loader2,
+  MessageSquare,
   RefreshCw,
   Sparkles,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useScrapeStore } from '../stores/scrapeStore'
 import { useAppStore } from '../stores/appStore'
-import { useVideoResults } from '../hooks/useVideoResults'
+import { useVideoResults, type VideoResult } from '../hooks/useVideoResults'
 import { openapiHasPostPath } from '../utils/analyticsApiProbe'
 import { joinServerUrl } from '../utils/joinServerUrl'
 import { readGuiAnalyticsLlmOverlay } from '../utils/guiAnalyticsLlmOverlay'
 import { extractFastApiErrorDetail } from '../utils/fastApiErrorDetail'
+import type { AnalyticsSnapshot, OllamaReportPayload } from '../types/analyticsShared'
+import { useAnalyticsStore } from '../stores/analyticsStore'
+import { ANALYTICS_METADATA_JOB_PREFIX } from '../constants/jobPrefixes'
 
 async function augmentAnalyticsHttpError(serverUrl: string, res: Response, bodyText: string, routePath: string): Promise<string> {
   let msg = bodyText.trim() || `HTTP ${res.status}`
@@ -37,89 +41,103 @@ async function augmentAnalyticsHttpError(serverUrl: string, res: Response, bodyT
   return msg
 }
 
-interface MetadataHistoryPoint {
-  captured_at: string
-  video_id?: string | null
-  view_count?: number | null
-  like_count?: number | null
-  dislike_count?: number | null
-  comment_count?: number | null
+const JOB_POLL_INTERVAL_MS = 2000
+const JOB_POLL_TIMEOUT_MS = 45 * 60 * 1000
+
+function normalizeOutputDirKey(dir: string): string {
+  return dir.replace(/[\\/]+$/, '').replace(/\\/g, '/')
 }
 
-interface VideoMetricsSummary {
-  video_id?: string | null
-  title?: string | null
-  channel_title?: string | null
-  description?: string | null
-  published_at?: string | null
-  view_count?: number | null
-  like_count?: number | null
-  dislike_count?: number | null
-  comment_count?: number | null
-  duration_seconds?: number | null
+function formatMetadataHistoryLabel(capturedAt: string): string {
+  const ms = Date.parse(capturedAt)
+  if (!Number.isFinite(ms)) {
+    return capturedAt.trim() || 'Unknown date'
+  }
+  return new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
-interface CommentVolumeBucket {
-  bucket_start: string
-  count: number
+/** Missing numeric fields in a history row become null in the GUI; do not plot those as zero (false dip). */
+function coalesceNumericSeriesForLineChart(values: Array<number | null | undefined>): number[] {
+  const nums: Array<number | null> = values.map((v) =>
+    typeof v === 'number' && Number.isFinite(v) ? v : null
+  )
+  const n = nums.length
+  if (n === 0) {
+    return []
+  }
+  if (nums.every((v) => v === null)) {
+    return nums.map(() => 0)
+  }
+  const work: Array<number | null> = [...nums]
+  let last: number | null = null
+  for (let i = 0; i < n; i++) {
+    if (work[i] !== null) {
+      last = work[i]
+    } else if (last !== null) {
+      work[i] = last
+    }
+  }
+  let prev: number | null = null
+  for (let i = n - 1; i >= 0; i--) {
+    if (work[i] !== null) {
+      prev = work[i]
+    } else if (prev !== null) {
+      work[i] = prev
+    }
+  }
+  return work.map((v) => (v === null ? 0 : v))
 }
 
-interface LikeCountBucket {
-  label: string
-  count: number
+function firstLastFiniteInSeries(nums: Array<number | null>): { first: number | null; last: number | null } {
+  const first = nums.find((v) => v !== null) ?? null
+  let last: number | null = null
+  for (let i = nums.length - 1; i >= 0; i--) {
+    if (nums[i] !== null) {
+      last = nums[i]
+      break
+    }
+  }
+  return { first, last }
 }
 
-interface AuthorAggregate {
-  author: string
-  comment_count: number
-  total_likes?: number | null
+function resolveYoutubeWatchUrl(result: VideoResult | null): string | null {
+  if (!result) {
+    return null
+  }
+  const u = result.url?.trim() ?? ''
+  if (u && /^https?:\/\//i.test(u) && (u.includes('youtube.com') || u.includes('youtu.be'))) {
+    return u
+  }
+  const vid = result.videoId?.trim() ?? ''
+  if (vid.length > 0) {
+    return `https://www.youtube.com/watch?v=${encodeURIComponent(vid)}`
+  }
+  return null
 }
 
-interface KeywordTerm {
-  term: string
-  count: number
-}
-
-interface CommentStats {
-  total_flat: number
-  top_level_count?: number | null
-  reply_count?: number | null
-  with_published_at: number
-  volume_by_day: CommentVolumeBucket[]
-  like_buckets: LikeCountBucket[]
-  top_authors: AuthorAggregate[]
-}
-
-interface AnalyticsSnapshot {
-  schema_version: string
-  output_dir: string
-  video_metrics?: VideoMetricsSummary | null
-  metadata_history: MetadataHistoryPoint[]
-  metadata_history_points: number
-  comments_file_present: boolean
-  comment_stats?: CommentStats | null
-  keywords: KeywordTerm[]
-  notes: string[]
-}
-
-interface OllamaMacroBrief {
-  themes: string[]
-  sentiment_overview: string
-  suggestions_and_requests: string
-  complaints_and_criticism: string
-  agreements_and_disagreements: string
-  notable_quotes: string[]
-  caveats: string[]
-}
-
-interface OllamaReportPayload {
-  schema_version: string
-  output_dir: string
-  model: string
-  generated_at: string
-  from_cache: boolean
-  comment_digest_meta: Record<string, unknown>
-  brief: OllamaMacroBrief
+async function pollJobUntilTerminal(serverUrl: string, jobId: string): Promise<{ ok: boolean; error?: string }> {
+  const deadline = Date.now() + JOB_POLL_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    const res = await fetch(joinServerUrl(serverUrl, `/jobs/${jobId}`))
+    if (!res.ok) {
+      const text = await res.text()
+      const detail = extractFastApiErrorDetail(text)
+      return { ok: false, error: detail ?? `HTTP ${res.status}` }
+    }
+    const job = (await res.json()) as { status?: string; error?: string }
+    const st = job.status
+    if (st === 'completed') {
+      return { ok: true }
+    }
+    if (st === 'failed') {
+      return { ok: false, error: job.error?.trim() || 'Job failed' }
+    }
+    if (st === 'cancelled') {
+      return { ok: false, error: 'Job cancelled' }
+    }
+    await new Promise((r) => setTimeout(r, JOB_POLL_INTERVAL_MS))
+  }
+  return { ok: false, error: 'Timed out waiting for scrape job' }
 }
 
 interface AnalyticsViewProps {
@@ -192,17 +210,28 @@ function Sparkline({
       </div>
     )
   }
-  const resolved = nums.map((v) => (v === null ? 0 : v))
-  const max = Math.max(...resolved, 1)
-  const min = Math.min(...resolved, 0)
-  const range = Math.max(max - min, 1)
+  const { first: firstFinite, last: lastFinite } = firstLastFiniteInSeries(nums)
+  const resolved = coalesceNumericSeriesForLineChart(values)
+  let low = Math.min(...resolved)
+  let high = Math.max(...resolved)
+  let span = high - low
+  if (span === 0) {
+    const pad = Math.max(Math.abs(high) * 0.02, 1)
+    low -= pad
+    high += pad
+    span = high - low
+  } else {
+    const pad = span * 0.08
+    low -= pad
+    high += pad
+    span = high - low
+  }
   const w = 240
   const h = 56
   const step = nums.length > 1 ? w / (nums.length - 1) : w
-  const points = nums.map((v, i) => {
-    const val = v === null ? min : v
+  const points = resolved.map((val, i) => {
     const x = i * step
-    const y = h - ((val - min) / range) * (h - 4) - 2
+    const y = h - ((val - low) / span) * (h - 4) - 2
     return `${x.toFixed(1)},${y.toFixed(1)}`
   })
   return (
@@ -219,7 +248,7 @@ function Sparkline({
         />
       </svg>
       <p className="mt-1 font-mono text-[11px] text-space-500">
-        first → last: {nums[0] ?? '—'} → {nums[nums.length - 1] ?? '—'}
+        first → last: {firstFinite ?? '—'} → {lastFinite ?? '—'}
       </p>
     </div>
   )
@@ -258,19 +287,37 @@ function HorizontalBars({
 
 const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) => {
   const jobs = useScrapeStore((s) => s.jobs)
+  const addJob = useScrapeStore((s) => s.addJob)
+  const addJobLog = useScrapeStore((s) => s.addJobLog)
+  const updateJob = useScrapeStore((s) => s.updateJob)
+  const setActiveJob = useScrapeStore((s) => s.setActiveJob)
   const galleryDiskRevisionBump = useScrapeStore((s) => s.galleryDiskRevisionBump)
+  const bumpGalleryDiskRevision = useScrapeStore((s) => s.bumpGalleryDiskRevision)
+  const maxComments = useScrapeStore((s) => s.scrapeOptions.maxComments)
   const results = useVideoResults(jobs, galleryDiskRevisionBump)
   const serverUrl = useAppStore((s) => s.serverUrl)
   const isServerRunning = useAppStore((s) => s.isServerRunning)
 
-  const [selectedDir, setSelectedDir] = useState<string>('')
-  const [snapshot, setSnapshot] = useState<AnalyticsSnapshot | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const selectedDir = useAnalyticsStore((s) => s.selectedOutputDir)
+  const setSelectedOutputDir = useAnalyticsStore((s) => s.setSelectedOutputDir)
+  const snapshot = useAnalyticsStore((s) => s.snapshot)
+  const setSnapshot = useAnalyticsStore((s) => s.setSnapshot)
+  const loadError = useAnalyticsStore((s) => s.loadError)
+  const setLoadError = useAnalyticsStore((s) => s.setLoadError)
+  const isFetchingSnapshot = useAnalyticsStore((s) => s.isFetchingSnapshot)
+  const setIsFetchingSnapshot = useAnalyticsStore((s) => s.setIsFetchingSnapshot)
+  const llmReport = useAnalyticsStore((s) => s.llmReport)
+  const setLlmReport = useAnalyticsStore((s) => s.setLlmReport)
+  const llmError = useAnalyticsStore((s) => s.llmError)
+  const setLlmError = useAnalyticsStore((s) => s.setLlmError)
 
   const [llmLoading, setLlmLoading] = useState(false)
-  const [llmReport, setLlmReport] = useState<OllamaReportPayload | null>(null)
-  const [llmError, setLlmError] = useState<string | null>(null)
+
+  const [metaRefreshing, setMetaRefreshing] = useState(false)
+  const [commentsRefreshing, setCommentsRefreshing] = useState(false)
+  const [allRefreshing, setAllRefreshing] = useState(false)
+  /** `null` = latest on-disk snapshot; otherwise index into `metadata_history` for chart slice + public metrics. */
+  const [metadataHistoryViewIndex, setMetadataHistoryViewIndex] = useState<number | null>(null)
 
   const sortedResults = useMemo(
     () => [...results].sort((a, b) => a.title.localeCompare(b.title)),
@@ -279,17 +326,20 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
 
   useEffect(() => {
     if (!selectedDir && sortedResults.length > 0) {
-      setSelectedDir(sortedResults[0].outputDir)
+      setSelectedOutputDir(sortedResults[0].outputDir, 'auto')
     }
-  }, [selectedDir, sortedResults])
+  }, [selectedDir, sortedResults, setSelectedOutputDir])
 
-  const fetchSnapshot = useCallback(async () => {
+  const fetchSnapshot = useCallback(async (options?: { silent?: boolean }) => {
     if (!serverUrl || !selectedDir) {
       toast.error('Pick a folder and ensure the API server is running.')
       return
     }
-    setLoading(true)
-    setError(null)
+    const silent = Boolean(options?.silent)
+    if (!silent) {
+      setIsFetchingSnapshot(true)
+    }
+    setLoadError(null)
     try {
       const res = await fetch(joinServerUrl(serverUrl, '/analytics/snapshot'), {
         method: 'POST',
@@ -302,22 +352,29 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
       }
       const data = (await res.json()) as AnalyticsSnapshot
       setSnapshot(data)
-      toast.success('Analytics loaded')
+      if (!silent) {
+        toast.success('Analytics loaded')
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      setError(msg)
-      toast.error('Could not load analytics')
+      setLoadError(msg)
+      toast.error(silent ? msg : 'Could not load analytics')
     } finally {
-      setLoading(false)
+      if (!silent) {
+        setIsFetchingSnapshot(false)
+      }
     }
-  }, [serverUrl, selectedDir])
+  }, [serverUrl, selectedDir, setIsFetchingSnapshot, setLoadError, setSnapshot])
 
   const fetchLlm = useCallback(
-    async (forceRefresh: boolean) => {
+    async (forceRefresh: boolean, options?: { silent?: boolean }) => {
       if (!serverUrl || !selectedDir) {
-        toast.error('Pick a folder and ensure the API server is running.')
+        if (!options?.silent) {
+          toast.error('Pick a folder and ensure the API server is running.')
+        }
         return
       }
+      const silent = Boolean(options?.silent)
       setLlmLoading(true)
       setLlmError(null)
       try {
@@ -339,11 +396,15 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
         }
         const data = (await res.json()) as OllamaReportPayload
         setLlmReport(data)
-        toast.success(data.from_cache ? 'Loaded cached AI brief' : 'Generated AI brief')
+        if (!silent) {
+          toast.success(data.from_cache ? 'Loaded cached AI brief' : 'Generated AI brief')
+        }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
         setLlmError(msg)
-        toast.error('AI brief failed — check LLM Settings (remote URL, model) and API error detail below.')
+        if (!silent) {
+          toast.error('AI brief failed — check LLM Settings (remote URL, model) and API error detail below.')
+        }
       } finally {
         setLlmLoading(false)
       }
@@ -351,11 +412,271 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
     [serverUrl, selectedDir]
   )
 
+  /** After analytics snapshot loads, try cache (or generate) without toasts; manual buttons still available. */
+  useEffect(() => {
+    if (!snapshot || !serverUrl || !selectedDir || !isServerRunning) {
+      return
+    }
+    const dirKey = normalizeOutputDirKey(selectedDir)
+    if (normalizeOutputDirKey(snapshot.output_dir) !== dirKey) {
+      return
+    }
+    void fetchLlm(false, { silent: true })
+  }, [snapshot, serverUrl, selectedDir, isServerRunning, fetchLlm])
+
+  const selectedResult = useMemo(
+    () =>
+      sortedResults.find((r) => normalizeOutputDirKey(r.outputDir) === normalizeOutputDirKey(selectedDir)) ?? null,
+    [sortedResults, selectedDir]
+  )
+
+  const watchUrl = useMemo(() => resolveYoutubeWatchUrl(selectedResult), [selectedResult])
+
+  const anyQuickRefreshBusy = metaRefreshing || commentsRefreshing || allRefreshing
+
+  const quickRefreshDisabled =
+    !serverUrl || !isServerRunning || !selectedDir || !watchUrl || isFetchingSnapshot || anyQuickRefreshBusy
+
+  const executeMetadataRefreshCore = useCallback(async () => {
+    if (!serverUrl || !selectedDir || !watchUrl) {
+      throw new Error('Missing server URL, folder, or video URL.')
+    }
+    const res = await fetch(joinServerUrl(serverUrl, '/metadata/refresh-batch'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        items: [{ output_dir: selectedDir, url: watchUrl }],
+      }),
+    })
+    const text = await res.text()
+    if (!res.ok) {
+      throw new Error(await augmentAnalyticsHttpError(serverUrl, res, text, '/metadata/refresh-batch'))
+    }
+    let body: { results?: Array<{ output_dir: string; ok: boolean; error?: string | null }> }
+    try {
+      body = JSON.parse(text) as typeof body
+    } catch {
+      throw new Error('Invalid JSON from metadata refresh')
+    }
+    const row = body.results?.[0]
+    if (!row?.ok) {
+      throw new Error(row?.error?.trim() || 'Metadata refresh failed')
+    }
+    bumpGalleryDiskRevision()
+  }, [serverUrl, selectedDir, watchUrl, bumpGalleryDiskRevision])
+
+  const runTrackedMetadataRefresh = useCallback(async () => {
+    if (!watchUrl || !selectedDir) {
+      throw new Error('Missing folder or video URL.')
+    }
+    const jobId = `${ANALYTICS_METADATA_JOB_PREFIX}${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}`}`
+    addJob(
+      {
+        id: jobId,
+        url: watchUrl,
+        videoTitle: 'Analytics · video details',
+        status: 'running',
+        progress: 20,
+        type: 'video',
+        operations: ['video'],
+        outputDir: selectedDir,
+        startedAt: new Date().toISOString(),
+      },
+      { skipDashboardBump: true }
+    )
+    addJobLog(jobId, {
+      level: 'info',
+      message: 'Refreshing video details via /metadata/refresh-batch',
+      timestamp: new Date().toISOString(),
+    })
+    try {
+      await executeMetadataRefreshCore()
+      updateJob(jobId, {
+        status: 'completed',
+        progress: 100,
+        completedAt: new Date().toISOString(),
+      })
+      addJobLog(jobId, {
+        level: 'info',
+        message: 'Video details updated (metadata_history / video.json).',
+        timestamp: new Date().toISOString(),
+      })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      updateJob(jobId, {
+        status: 'failed',
+        progress: 100,
+        error: msg,
+        completedAt: new Date().toISOString(),
+      })
+      addJobLog(jobId, {
+        level: 'error',
+        message: msg,
+        timestamp: new Date().toISOString(),
+      })
+      throw e
+    }
+  }, [
+    watchUrl,
+    selectedDir,
+    addJob,
+    addJobLog,
+    updateJob,
+    executeMetadataRefreshCore,
+  ])
+
+  const executeCommentsRefreshCore = useCallback(async () => {
+    if (!serverUrl || !selectedDir || !watchUrl) {
+      throw new Error('Missing server URL, folder, or video URL.')
+    }
+    const res = await fetch(joinServerUrl(serverUrl, '/scrape/video'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: watchUrl,
+        include_video: false,
+        include_comments: true,
+        include_transcript: false,
+        include_thumbnails: false,
+        include_download: false,
+        max_comments: maxComments,
+        comments_snapshot_before_write: true,
+        comments_fetch_all: true,
+        transcript_format: 'txt',
+        video_quality: 'best',
+      }),
+    })
+    const text = await res.text()
+    if (!res.ok) {
+      throw new Error(await augmentAnalyticsHttpError(serverUrl, res, text, '/scrape/video'))
+    }
+    let data: { job_id?: string; output_dir?: string }
+    try {
+      data = JSON.parse(text) as { job_id?: string; output_dir?: string }
+    } catch {
+      throw new Error('Invalid JSON when starting comment scrape')
+    }
+    const jobId = data.job_id
+    if (!jobId) {
+      throw new Error('No job_id returned when starting comment scrape')
+    }
+    const outputDir =
+      typeof data.output_dir === 'string' && data.output_dir.trim().length > 0 ? data.output_dir : selectedDir
+    if (normalizeOutputDirKey(outputDir) !== normalizeOutputDirKey(selectedDir)) {
+      toast(
+        `Comments were written to ${outputDir}, which differs from the folder selected above. Pick that folder or use the standard output layout so analytics matches the scrape.`,
+        { duration: 9000 }
+      )
+    }
+    addJob({
+      id: jobId,
+      url: watchUrl,
+      status: 'running',
+      progress: 0,
+      type: 'comments',
+      operations: ['comments'],
+      outputDir,
+      startedAt: new Date().toISOString(),
+    })
+    setActiveJob(jobId)
+    const outcome = await pollJobUntilTerminal(serverUrl, jobId)
+    if (!outcome.ok) {
+      const errMsg = outcome.error ?? 'Comment scrape failed'
+      updateJob(jobId, {
+        status: 'failed',
+        error: errMsg,
+        completedAt: new Date().toISOString(),
+        progress: 100,
+      })
+      throw new Error(errMsg)
+    }
+    updateJob(jobId, {
+      status: 'completed',
+      progress: 100,
+      completedAt: new Date().toISOString(),
+      outputDir,
+    })
+    bumpGalleryDiskRevision()
+  }, [
+    serverUrl,
+    selectedDir,
+    watchUrl,
+    maxComments,
+    bumpGalleryDiskRevision,
+    addJob,
+    setActiveJob,
+    updateJob,
+  ])
+
+  const handleRefreshVideoMetadata = useCallback(async () => {
+    const loadingToast = toast.loading('Refreshing video details…')
+    setMetaRefreshing(true)
+    try {
+      await runTrackedMetadataRefresh()
+      toast.success('Video details refreshed', { id: loadingToast })
+      await fetchSnapshot({ silent: true })
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e), { id: loadingToast })
+    } finally {
+      setMetaRefreshing(false)
+    }
+  }, [runTrackedMetadataRefresh, fetchSnapshot])
+
+  const handleRefreshComments = useCallback(async () => {
+    const loadingToast = toast.loading('Refreshing comments (see Scrape Jobs for live progress)…')
+    setCommentsRefreshing(true)
+    try {
+      await executeCommentsRefreshCore()
+      toast.success('Comments refreshed', { id: loadingToast })
+      await fetchSnapshot({ silent: true })
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e), { id: loadingToast })
+    } finally {
+      setCommentsRefreshing(false)
+    }
+  }, [executeCommentsRefreshCore, fetchSnapshot])
+
+  const handleRefreshAll = useCallback(async () => {
+    const loadingToast = toast.loading('Refreshing video details, then comments…')
+    setAllRefreshing(true)
+    try {
+      await runTrackedMetadataRefresh()
+      await executeCommentsRefreshCore()
+      toast.success('Video details and comments refreshed', { id: loadingToast })
+      await fetchSnapshot({ silent: true })
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e), { id: loadingToast })
+    } finally {
+      setAllRefreshing(false)
+    }
+  }, [runTrackedMetadataRefresh, executeCommentsRefreshCore, fetchSnapshot])
+
   const hist = snapshot?.metadata_history ?? []
-  const views = hist.map((h) => h.view_count)
-  const likes = hist.map((h) => h.like_count)
-  const dislikes = hist.map((h) => h.dislike_count)
-  const pubComments = hist.map((h) => h.comment_count)
+
+  useEffect(() => {
+    setMetadataHistoryViewIndex(null)
+  }, [selectedDir, snapshot?.output_dir])
+
+  useEffect(() => {
+    if (metadataHistoryViewIndex !== null && metadataHistoryViewIndex >= hist.length) {
+      setMetadataHistoryViewIndex(null)
+    }
+  }, [hist.length, metadataHistoryViewIndex])
+
+  const histForCharts = useMemo(() => {
+    if (metadataHistoryViewIndex === null) {
+      return hist
+    }
+    return hist.slice(0, metadataHistoryViewIndex + 1)
+  }, [hist, metadataHistoryViewIndex])
+
+  const historyPoint =
+    metadataHistoryViewIndex !== null ? hist[metadataHistoryViewIndex] ?? null : null
+
+  const views = histForCharts.map((h) => h.view_count)
+  const likes = histForCharts.map((h) => h.like_count)
+  const dislikes = histForCharts.map((h) => h.dislike_count)
+  const pubComments = histForCharts.map((h) => h.comment_count)
 
   return (
     <div className="space-y-6">
@@ -366,15 +687,51 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
             Analytics
           </h2>
           <p className="text-space-400">
-            Deterministic stats from scrape files; optional LLM synthesis (configure in Settings — remote Ollama is sent on each request, no API restart needed).
+            Deterministic stats from scrape files; optional LLM synthesis (configure in Settings).
           </p>
         </div>
-        {!isServerRunning ? (
-          <div className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
-            <AlertTriangle className="h-4 w-4 shrink-0" />
-            API offline — start the backend to load analytics.
-          </div>
-        ) : null}
+        <div className="flex flex-col items-stretch gap-2 sm:items-end">
+          {snapshot && hist.length > 0 ? (
+            <div className="flex flex-col gap-1 sm:items-end">
+              <label htmlFor="analytics-metadata-snapshot" className="text-xs text-space-400">
+                Metadata snapshot
+              </label>
+              <select
+                id="analytics-metadata-snapshot"
+                value={metadataHistoryViewIndex === null ? 'latest' : String(metadataHistoryViewIndex)}
+                onChange={(e) => {
+                  const v = e.target.value
+                  if (v === 'latest') {
+                    setMetadataHistoryViewIndex(null)
+                    return
+                  }
+                  const idx = Number.parseInt(v, 10)
+                  if (!Number.isFinite(idx) || idx < 0 || idx >= hist.length) {
+                    setMetadataHistoryViewIndex(null)
+                    return
+                  }
+                  setMetadataHistoryViewIndex(idx)
+                }}
+                className="futuristic-input min-w-[14rem] py-2 text-sm"
+              >
+                <option value="latest">Latest (current files)</option>
+                {[...hist.keys()]
+                  .reverse()
+                  .map((i) => (
+                    <option key={`${hist[i].captured_at}-${i}`} value={String(i)}>
+                      {formatMetadataHistoryLabel(hist[i].captured_at)}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          ) : null}
+          {!isServerRunning ? (
+            <div className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              API offline — start the backend to load analytics.
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <CollapsibleSection
@@ -387,10 +744,9 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
             <label className="block text-xs text-space-400 mb-1">Scrape folder</label>
             <select
               value={selectedDir}
+              disabled={anyQuickRefreshBusy}
               onChange={(e) => {
-                setSelectedDir(e.target.value)
-                setSnapshot(null)
-                setLlmReport(null)
+                setSelectedOutputDir(e.target.value, 'user-change')
               }}
               className="futuristic-input w-full py-2"
             >
@@ -408,10 +764,10 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
           <button
             type="button"
             onClick={() => void fetchSnapshot()}
-            disabled={loading || !serverUrl || !selectedDir}
+            disabled={isFetchingSnapshot || !serverUrl || !selectedDir}
             className="futuristic-btn futuristic-btn-primary flex items-center gap-2"
           >
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {isFetchingSnapshot ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             Load data
           </button>
         </div>
@@ -420,7 +776,8 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
           <div className="flex flex-wrap items-center gap-3 rounded-lg border border-neon-blue/30 bg-neon-blue/10 px-4 py-3 text-sm text-space-200">
             <LineChart className="h-5 w-5 shrink-0 text-neon-blue" />
             <span>
-              Trend charts need at least two metadata snapshots. Use{' '}
+              Trend charts need at least two metadata snapshots. After you <strong className="text-space-300">Load data</strong>, use{' '}
+              <strong className="text-space-300">Refresh video details</strong> under Performance over time,{' '}
               <button
                 type="button"
                 className="text-neon-cyan underline hover:text-white"
@@ -428,14 +785,14 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
               >
                 Video Gallery
               </button>{' '}
-              metadata refresh to append <code className="text-neon-purple">metadata_history.jsonl</code>.
+              for batch runs, or any flow that appends <code className="text-neon-purple">metadata_history.jsonl</code>.
             </span>
           </div>
         ) : null}
 
-        {error ? (
+        {loadError ? (
           <pre className="whitespace-pre-wrap rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-200">
-            {error}
+            {loadError}
           </pre>
         ) : null}
       </CollapsibleSection>
@@ -450,71 +807,127 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
             <CollapsibleSection
               className="glass-card overflow-hidden"
               title="Video snapshot"
-              subtitle="Latest metrics from video.json."
+              subtitle={
+                historyPoint
+                  ? `Public metrics as of ${formatMetadataHistoryLabel(historyPoint.captured_at)}. Title and description from latest video.json.`
+                  : 'Latest metrics from video.json.'
+              }
               contentClassName="space-y-3 p-5"
             >
-              {snapshot.video_metrics ? (
+              {snapshot.video_metrics || historyPoint ? (
                 <div className="space-y-3 text-sm text-space-300">
                   <ul className="space-y-1">
                     <li>
-                      <span className="text-space-500">Title:</span> {snapshot.video_metrics.title ?? '—'}
+                      <span className="text-space-500">Title:</span> {snapshot.video_metrics?.title ?? '—'}
                     </li>
                     <li>
                       <span className="text-space-500">Channel:</span>{' '}
-                      {snapshot.video_metrics.channel_title ?? '—'}
+                      {snapshot.video_metrics?.channel_title ?? '—'}
                     </li>
                     <li>
                       <span className="text-space-500">Views:</span>{' '}
-                      {snapshot.video_metrics.view_count?.toLocaleString() ?? '—'}
+                      {(historyPoint?.view_count ?? snapshot.video_metrics?.view_count)?.toLocaleString() ?? '—'}
                     </li>
                     <li>
                       <span className="text-space-500">Likes / Dislikes:</span>{' '}
-                      {snapshot.video_metrics.like_count?.toLocaleString() ?? '—'} /{' '}
-                      {snapshot.video_metrics.dislike_count?.toLocaleString() ?? '—'}
+                      {(historyPoint?.like_count ?? snapshot.video_metrics?.like_count)?.toLocaleString() ?? '—'} /{' '}
+                      {(historyPoint?.dislike_count ?? snapshot.video_metrics?.dislike_count)?.toLocaleString() ?? '—'}
                     </li>
                     <li>
                       <span className="text-space-500">Comment count (YouTube):</span>{' '}
-                      {snapshot.video_metrics.comment_count?.toLocaleString() ?? '—'}
+                      {(historyPoint?.comment_count ?? snapshot.video_metrics?.comment_count)?.toLocaleString() ??
+                        '—'}
                     </li>
                     {snapshot.comment_stats ? (
                       <li>
                         <span className="text-space-500">Comments scraped (file):</span>{' '}
                         {snapshot.comment_stats.total_flat.toLocaleString()}
+                        {historyPoint ? (
+                          <span className="mt-1 block text-xs text-space-500">
+                            From the current comments file, not the metadata date above.
+                          </span>
+                        ) : null}
                       </li>
                     ) : null}
                   </ul>
-                  <div>
-                    <div className="text-space-500">Description</div>
-                    <div className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-white/10 bg-black/20 p-3 text-space-300">
-                      {snapshot.video_metrics.description?.trim() ? snapshot.video_metrics.description : '—'}
+                  {snapshot.video_metrics ? (
+                    <div>
+                      <div className="text-space-500">Description</div>
+                      <div className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-white/10 bg-black/20 p-3 text-space-300">
+                        {snapshot.video_metrics.description?.trim() ? snapshot.video_metrics.description : '—'}
+                      </div>
                     </div>
-                  </div>
+                  ) : null}
                 </div>
               ) : (
                 <p className="text-space-500 text-sm">No video.json metadata.</p>
               )}
             </CollapsibleSection>
 
-            <CollapsibleSection
-              className="glass-card overflow-hidden"
-              title="Performance over time"
-              subtitle="Sparklines from metadata_history.jsonl."
-              contentClassName="p-5"
-            >
-              {hist.length === 0 ? (
-                <p className="text-sm text-space-500">No metadata history file.</p>
-              ) : (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Sparkline values={views} label="Views" tone="text-neon-blue" />
-                  <Sparkline values={likes} label="Likes" tone="text-neon-green" />
-                  <Sparkline values={dislikes} label="Dislikes" tone="text-amber-400" />
-                  <Sparkline values={pubComments} label="Public comment total" tone="text-neon-purple" />
+            <div className="flex min-w-0 flex-col gap-4">
+              <CollapsibleSection
+                className="glass-card overflow-hidden"
+                title="Performance over time"
+                subtitle="Sparklines from metadata_history.jsonl."
+                contentClassName="p-5"
+              >
+                {hist.length === 0 ? (
+                  <p className="text-sm text-space-500">No metadata history file.</p>
+                ) : (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Sparkline values={views} label="Views" tone="text-neon-blue" />
+                    <Sparkline values={likes} label="Likes" tone="text-neon-green" />
+                    <Sparkline values={dislikes} label="Dislikes" tone="text-amber-400" />
+                    <Sparkline values={pubComments} label="Public comment total" tone="text-neon-purple" />
+                  </div>
+                )}
+                <p className="mt-3 text-xs text-space-500">
+                  Points: {histForCharts.length}
+                  {historyPoint ? ` of ${hist.length}` : ''} (from metadata_history.jsonl).
+                  {historyPoint
+                    ? ' Trend is clipped to the selected capture.'
+                    : ' Capture times align with gallery refresh runs.'}
+                </p>
+              </CollapsibleSection>
+
+              <div className="glass-card space-y-3 overflow-hidden p-4">
+                {!watchUrl && selectedDir ? (
+                  <p className="text-sm text-amber-200/90">
+                    Could not resolve a YouTube URL for this folder. Complete a scrape with a watch link, or ensure{' '}
+                    <code className="text-neon-purple">video.json</code> / discovery provides a video id.
+                  </p>
+                ) : null}
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={quickRefreshDisabled}
+                    onClick={() => void handleRefreshVideoMetadata()}
+                    className="futuristic-btn futuristic-btn-primary flex items-center gap-2"
+                  >
+                    {metaRefreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                    Refresh video details
+                  </button>
+                  <button
+                    type="button"
+                    disabled={quickRefreshDisabled}
+                    onClick={() => void handleRefreshComments()}
+                    className="futuristic-btn flex items-center gap-2"
+                  >
+                    {commentsRefreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageSquare className="h-4 w-4" />}
+                    Refresh comments
+                  </button>
+                  <button
+                    type="button"
+                    disabled={quickRefreshDisabled}
+                    onClick={() => void handleRefreshAll()}
+                    className="futuristic-btn flex items-center gap-2 border border-neon-cyan/35"
+                  >
+                    {allRefreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                    Refresh all
+                  </button>
                 </div>
-              )}
-              <p className="mt-3 text-xs text-space-500">
-                Points: {hist.length} (from metadata_history.jsonl). Capture times align with gallery refresh runs.
-              </p>
-            </CollapsibleSection>
+              </div>
+            </div>
           </div>
 
           {snapshot.notes.length > 0 ? (
@@ -536,6 +949,7 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
               title="Comment volume & likes"
               subtitle="Buckets and daily UTC volume from scraped comments."
               contentClassName="p-5"
+              defaultOpen={false}
             >
               <div className="grid gap-4 lg:grid-cols-3">
                 <HorizontalBars buckets={snapshot.comment_stats.like_buckets} title="Comment likes (bucket)" />
@@ -578,6 +992,7 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
             <CollapsibleSection
               title="Top authors (volume)"
               contentClassName="p-0"
+              defaultOpen={false}
             >
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
@@ -607,6 +1022,7 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
               title="Top tokens (English heuristic)"
               subtitle="Naïve word frequencies — supplement with the AI brief for themes."
               contentClassName="p-0"
+              defaultOpen={false}
             >
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
@@ -639,6 +1055,7 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
             }
             subtitle="Optional LLM synthesis from scraped comments (configure Ollama in Settings)."
             contentClassName="space-y-4 p-5"
+            defaultOpen
             headerRight={
               <>
                 <button

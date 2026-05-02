@@ -1,6 +1,10 @@
 # Start the Electron + Vite dev GUI from the repository root on Windows.
 $ErrorActionPreference = "Stop"
 $RootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$PortableNode = Join-Path $env:LOCALAPPDATA "youtube-scrape-tools\nodejs-current"
+if (Test-Path (Join-Path $PortableNode "node.exe")) {
+    $env:Path = "$(Resolve-Path $PortableNode).Path;$env:Path"
+}
 $GuiDir = Join-Path $RootDir "gui"
 $PythonExe = Join-Path $RootDir ".venv\Scripts\python.exe"
 

@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Literal, cast
 
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Query
 from pydantic import BaseModel, Field
 
 from api.state import get_job_store, get_websocket_manager
@@ -17,6 +17,7 @@ from youtube_scrape.adapters.browser_playwright import CamoufoxBrowserSession
 from youtube_scrape.adapters.filesystem import LocalFileSink
 from youtube_scrape.adapters.http_httpx import HttpxHttpClient
 from youtube_scrape.application.download_service import DownloadService
+from youtube_scrape.application.comment_snapshot_archive import archive_existing_comments_json
 from youtube_scrape.application.scrape_comments import ScrapeCommentsService
 from youtube_scrape.application.scrape_thumbnails import ScrapeThumbnailsService
 from youtube_scrape.application.scrape_transcript import ScrapeTranscriptService
@@ -55,7 +56,20 @@ class ScrapeVideoRequest(BaseModel):
     include_transcript: bool = Field(default=False, description="Include transcript")
     include_thumbnails: bool = Field(default=False, description="Include thumbnails")
     include_download: bool = Field(default=False, description="Download video/audio")
-    max_comments: int = Field(default=100, ge=1, le=10000, description="Maximum comments to fetch")
+    max_comments: int = Field(
+        default=0,
+        ge=0,
+        le=10000,
+        description="0 = fetch all comments up to YOUTUBE_SCRAPE_COMMENTS_SAFETY_CEILING; otherwise stop after N.",
+    )
+    comments_snapshot_before_write: bool = Field(
+        default=False,
+        description="When writing comments, copy existing comments.json into comment_snapshots/ first.",
+    )
+    comments_fetch_all: bool = Field(
+        default=False,
+        description="Fetch comments until YOUTUBE_SCRAPE_COMMENTS_SAFETY_CEILING (max_comments ignored for stopping).",
+    )
     transcript_format: str = Field(default="txt", description="Transcript format: txt, vtt, json")
     video_quality: str = Field(default="best", description="Video quality preference")
 
@@ -215,10 +229,20 @@ async def _run_scrape_job_impl(job_id: str, request: ScrapeVideoRequest) -> None
                         content = envelope.data.get("content") or envelope.data.get("body") or ""
                         transcript_path.write_text(str(content), encoding="utf-8")
                 elif operation == "comments":
+                    if request.comments_snapshot_before_write:
+                        archived = archive_existing_comments_json(output_dir)
+                        if archived is not None:
+                            await manager.send_log(
+                                job_id,
+                                "info",
+                                f"Previous comments.json archived to {archived.relative_to(output_dir)}",
+                            )
+                    fetch_all = request.comments_fetch_all or (request.max_comments == 0)
+                    max_comments_arg: int | None = None if fetch_all else request.max_comments
                     envelope = await ScrapeCommentsService(browser=browser, http=http, settings=settings).scrape(
                         request.url,
-                        max_comments=request.max_comments,
-                        fetch_all=False,
+                        max_comments=max_comments_arg,
+                        fetch_all=fetch_all,
                         max_replies_per_thread=3,
                         include_replies=True,
                     )
@@ -356,7 +380,7 @@ async def scrape_video(
 @router.post("/comments")
 async def scrape_comments(
     url: str,
-    max_comments: int = 100
+    max_comments: int = Query(default=0, ge=0, le=10000),
 ) -> Dict[str, Any]:
     """Start a comments-only scrape job."""
     request = ScrapeVideoRequest(

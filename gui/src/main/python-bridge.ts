@@ -1,4 +1,5 @@
 import { spawn, ChildProcess } from 'child_process'
+import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { app } from 'electron'
 import path from 'path'
@@ -142,13 +143,21 @@ export class PythonBridge {
   }
 
   private getPythonPath(): string {
-    // In production, use bundled Python
+    // In production, prefer PyInstaller API binary (scripts/build-python.py); fall back to bundled interpreter layout.
     if (app.isPackaged) {
-      const platform = process.platform
-      if (platform === 'win32') {
-        return path.join(process.resourcesPath, 'python', 'python.exe')
+      const base = path.join(process.resourcesPath, 'python')
+      const winApi = path.join(base, 'youtube-scrape-api.exe')
+      const posixApi = path.join(base, 'youtube-scrape-api')
+      if (process.platform === 'win32' && fs.existsSync(winApi)) {
+        return winApi
       }
-      return path.join(process.resourcesPath, 'python', 'bin', 'python')
+      if (process.platform !== 'win32' && fs.existsSync(posixApi)) {
+        return posixApi
+      }
+      if (process.platform === 'win32') {
+        return path.join(base, 'python.exe')
+      }
+      return path.join(base, 'bin', 'python')
     }
     // In development, use system Python from venv or PATH
     return process.env.PYTHON_PATH || 'python'
@@ -217,12 +226,20 @@ export class PythonBridge {
       const spawnCwd = !app.isPackaged
         ? this.getDevRepoRootForSpawn()
         : path.dirname(this.config.apiModulePath)
-      const args = [
-        '-u', // Unbuffered output for real-time logs
-        this.config.apiModulePath,
-        '--host', this.config.host,
-        '--port', port.toString()
-      ]
+
+      const isBundledApiBinary =
+        app.isPackaged &&
+        (this.config.pythonPath.endsWith('youtube-scrape-api.exe') ||
+          this.config.pythonPath.endsWith('youtube-scrape-api'))
+
+      const args = isBundledApiBinary
+        ? ['--host', this.config.host, '--port', port.toString()]
+        : [
+            '-u',
+            this.config.apiModulePath,
+            '--host', this.config.host,
+            '--port', port.toString()
+          ]
       const cmdline = [this.config.pythonPath, ...args].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ')
       devLogLine(
         `spawn: cwd=${spawnCwd} | ${cmdline}`

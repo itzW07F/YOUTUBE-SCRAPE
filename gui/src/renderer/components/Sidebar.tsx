@@ -11,6 +11,7 @@ import {
   Youtube,
   BarChart3,
 } from 'lucide-react'
+import { useScrapeStore } from '../stores/scrapeStore'
 
 type SidebarViewId =
   | 'dashboard'
@@ -39,6 +40,9 @@ const navItems: Array<{ id: SidebarViewId; label: string; icon: typeof LayoutDas
 ]
 
 const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => {
+  const activeJobCount = useScrapeStore(
+    (s) => s.jobs.filter((j) => j.status === 'running' || j.status === 'pending').length
+  )
   return (
     <motion.aside
       initial={{ x: -280 }}
@@ -82,11 +86,19 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => {
                   `}
                 >
                   <Icon className={`w-5 h-5 ${isActive ? 'text-neon-blue' : 'group-hover:text-neon-cyan'}`} />
-                  <span className="font-medium text-sm">{item.label}</span>
+                  <span className="font-medium text-sm flex-1 text-left truncate">{item.label}</span>
+                  {item.id === 'jobs' && activeJobCount > 0 ? (
+                    <span
+                      className="shrink-0 min-w-[1.35rem] rounded-full bg-neon-cyan px-1.5 py-0.5 text-center text-[11px] font-bold leading-none text-space-900"
+                      title={`${activeJobCount} active job${activeJobCount === 1 ? '' : 's'}`}
+                    >
+                      {activeJobCount > 99 ? '99+' : activeJobCount}
+                    </span>
+                  ) : null}
                   {isActive && (
                     <motion.div
                       layoutId="activeIndicator"
-                      className="ml-auto w-1.5 h-1.5 rounded-full bg-neon-blue"
+                      className="shrink-0 w-1.5 h-1.5 rounded-full bg-neon-blue"
                     />
                   )}
                 </button>

@@ -19,13 +19,42 @@ Linux/macOS:
 ./setup.sh
 ```
 
-Windows PowerShell:
+Windows (recommended for non-technical users — double-click from File Explorer):
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\setup.ps1
+```text
+setup-windows.cmd
 ```
 
+The CMD launcher forces a safe working directory and execution policy, then runs `setup.ps1`. For automation or advanced use:
+
+```powershell
+powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
+```
+
+Useful flags: `-SkipGui`, `-SkipBrowser`, `-SkipPreflight`, `-SkipAudit`, `-MinDiskGiB 8`. Set `SETUP_WINDOWS_NONINTERACTIVE=1` before running `setup-windows.cmd` to skip the end pause (CI/scripts).
+
 The setup scripts create an isolated `.venv`, install Python dependencies from `uv.lock`, download Camoufox with `python -m camoufox fetch`, and install Electron dependencies from `gui/package-lock.json` with `npm ci`. Large generated folders (`.venv/`, `gui/node_modules/`, `gui/out/`, `output/`, browser payloads, packaged installers) are intentionally excluded from GitHub.
+
+**Linux / macOS (`setup.sh`):** prints the same style of **read-only audit** (OS, arch, free space, curl/git/node/uv, resolved Node tarball URL when `curl` + `python3` or `jq` are available), asserts repo files, checks disk + HTTPS to nodejs.org and astral.sh, retries flaky `uv` / `camoufox` / `npm ci` steps, installs `uv`, runs distro packages on Linux (unless `--skip-os-deps`), provisions Node via **apt / dnf / pacman / Homebrew** when possible and otherwise **official Node LTS `.tar.xz`** under `$XDG_DATA_HOME` (or `~/.local/share`), and falls back across Python **3.13** / **3.12** if needed. Flags: `--skip-gui`, `--skip-browser`, `--skip-os-deps`, `--skip-audit`, `--skip-preflight`, `--min-disk-gib N`. See `./setup.sh --help`.
+
+**Windows behavior notes:** `setup.ps1` prints a **read-only environment audit** (OS, architecture, PATH tooling, resolved Node portable URL when online), then checks repo files, free disk space, and HTTPS reachability before large downloads; retries flaky network steps; installs `uv` and Node.js (trying winget, then Chocolatey if present, then a per-user portable Node LTS zip from nodejs.org if neither applies); falls back across Python `3.13` / `3.12` if one toolchain cannot be provisioned. Use `-SkipAudit` to suppress the audit banner.
+
+## Packaging (testers / beta)
+
+From the repository root, on the **same OS** you want to ship for:
+
+```bash
+./scripts/package-standalone.sh --help
+./scripts/package-standalone.sh
+```
+
+- **Linux** (run on Linux): produces an **AppImage** under `gui/dist/` (self-contained GUI + PyInstaller API binary + bundled resources). Re-running clears `gui/dist`, `gui/out`, `build/pyinstaller`, and `gui/resources/{python,camoufox}` by default (use `--no-clean` to skip).
+- **Windows** (run from **Git Bash** on Windows): produces an **NSIS installer** `.exe` under `gui/dist/`.
+- **macOS**: `./scripts/package-standalone.sh --target mac` builds a **DMG**.
+
+Requirements: `uv`, Node 18+, `npm`; first run downloads **Camoufox** via `uv run python -m camoufox fetch` unless you pass `--skip-camoufox-fetch`. PyInstaller is pulled with `uv run --with pyinstaller==6.16.0` for the API step (no extra line in `pyproject.toml`).
+
+**Note:** “Runs on any computer” is limited by normal desktop constraints (glibc vs musl on Linux, 64-bit, AppImage FUSE on some systems, Windows x64 for the default NSIS target). Cross-compiling Windows installers from Linux is not wired in this script.
 
 ## Run
 
@@ -53,11 +82,13 @@ GUI:
 ./start-gui.sh
 ```
 
-Windows PowerShell:
+Windows:
 
-```powershell
-.\start-gui.ps1
+```text
+start-gui.cmd
 ```
+
+or `powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\start-gui.ps1`
 
 ## Test
 

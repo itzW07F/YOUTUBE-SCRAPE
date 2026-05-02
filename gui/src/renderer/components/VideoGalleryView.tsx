@@ -6,6 +6,7 @@ import { useGalleryPlayerStore } from '../stores/galleryPlayerStore'
 import { useAppStore } from '../stores/appStore'
 import toast from 'react-hot-toast'
 import { appLog } from '../lib/appLogger'
+import { GALLERY_METADATA_JOB_PREFIX } from '../constants/jobPrefixes'
 
 export const GalleryThumb: React.FC<{ sources: string[]; className?: string }> = ({ sources, className }) => {
   const [sourceIndex, setSourceIndex] = useState(0)
@@ -223,7 +224,6 @@ const GALLERY_LIST_MAX_HEIGHT_CLASS = 'max-h-[min(36rem,calc(100vh-14rem))]'
 
 const MAX_METADATA_REFRESH_BATCH = 20
 
-const GALLERY_METADATA_JOB_PREFIX = 'gallery-metadata-'
 
 export interface VideoGalleryViewProps {
   /** Called after a batch placeholder job is created so Jobs can reflect in-progress gallery metadata refreshes. */

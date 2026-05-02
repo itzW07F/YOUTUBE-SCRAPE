@@ -447,13 +447,25 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
                 {scrapeOptions.includeComments && (
                   <div>
                     <label className="block text-sm text-space-300 mb-2">
-                      Max Comments
+                      Max comments
                     </label>
+                    <p className="text-xs text-space-500 mb-2">
+                      Use <span className="text-space-400">0</span> for all comments (up to the API safety limit). Set a
+                      positive number to cap the count.
+                    </p>
                     <input
                       type="number"
                       value={scrapeOptions.maxComments}
-                      onChange={(e) => updateScrapeOptions({ maxComments: parseInt(e.target.value) || 100 })}
-                      min={1}
+                      onChange={(e) => {
+                        const raw = e.target.value
+                        const v = parseInt(raw, 10)
+                        const next =
+                          raw.trim() === '' || !Number.isFinite(v)
+                            ? 0
+                            : Math.min(10000, Math.max(0, v))
+                        updateScrapeOptions({ maxComments: next })
+                      }}
+                      min={0}
                       max={10000}
                       className="futuristic-input w-32"
                     />

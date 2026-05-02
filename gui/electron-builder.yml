@@ -22,6 +22,15 @@ extraResources:
       - '**/*.py'
       - '!**/__pycache__/**'
       - '!**/*.pyc'
+  # PyInstaller API binary + Camoufox payload (populated by scripts/build-python.py before packaging).
+  - from: resources/python
+    to: python
+    filter:
+      - '**/*'
+  - from: resources/camoufox
+    to: camoufox
+    filter:
+      - '**/*'
   - from: ../output
     to: output
     filter:

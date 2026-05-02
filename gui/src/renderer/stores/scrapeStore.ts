@@ -363,7 +363,7 @@ export const useScrapeStore = create<ScrapeState>((set, get) => ({
     includeTranscript: false,
     includeThumbnails: false,
     includeDownload: false,
-    maxComments: 100,
+    maxComments: 0,
     transcriptFormat: 'txt',
     videoQuality: 'best',
   },
