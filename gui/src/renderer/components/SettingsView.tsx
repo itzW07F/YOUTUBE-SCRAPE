@@ -18,6 +18,8 @@ import {
   MessageSquare,
   ScanSearch,
   Trash2,
+  BookOpen,
+  ExternalLink,
 } from 'lucide-react'
 import {
   useAppStore,
@@ -50,6 +52,10 @@ import {
   useScrapeStore,
 } from '../stores/scrapeStore'
 import type { AnalyticsLlmUiFields } from '../utils/guiAnalyticsLlmOverlay'
+import {
+  YOUTUBE_DATA_API_DOC_LINKS,
+  YOUTUBE_DATA_API_STORE_DEFAULTS,
+} from '../config/youtubeDataApiSettings'
 
 function parseOllamaModelsCache(raw: unknown): OllamaModelsCacheV1 | null {
   if (!raw || typeof raw !== 'object') {
@@ -134,6 +140,14 @@ const SettingsView: React.FC = () => {
   const [ollamaDetectBusy, setOllamaDetectBusy] = useState(false)
   const [ollamaModelManualOpen, setOllamaModelManualOpen] = useState(false)
   const [ollamaManualDraft, setOllamaManualDraft] = useState('')
+
+  const [youtubeDataApiHydrated, setYoutubeDataApiHydrated] = useState(false)
+  const [youtubeDataApiEnabled, setYoutubeDataApiEnabled] = useState(
+    YOUTUBE_DATA_API_STORE_DEFAULTS.youtubeDataApiEnabled
+  )
+  const [youtubeDataApiKey, setYoutubeDataApiKey] = useState(YOUTUBE_DATA_API_STORE_DEFAULTS.youtubeDataApiKey)
+  const [youtubeDiscoveryBusy, setYoutubeDiscoveryBusy] = useState(false)
+  const [youtubeDiscoverySummary, setYoutubeDiscoverySummary] = useState<string | null>(null)
 
   const updateScrapeOptions = useScrapeStore((s) => s.updateScrapeOptions)
 
@@ -238,6 +252,36 @@ const SettingsView: React.FC = () => {
         // ignore
       })
   }, [])
+
+  useEffect(() => {
+    if (!window.electronAPI) {
+      return
+    }
+    void Promise.all([
+      window.electronAPI.storeGet('youtubeDataApiEnabled'),
+      window.electronAPI.storeGet('youtubeDataApiKey'),
+    ])
+      .then(([en, k]) => {
+        setYoutubeDataApiEnabled(en === true)
+        if (typeof k === 'string') {
+          setYoutubeDataApiKey(k)
+        }
+      })
+      .finally(() => {
+        setYoutubeDataApiHydrated(true)
+      })
+  }, [])
+
+  useEffect(() => {
+    if (!window.electronAPI || !youtubeDataApiHydrated) {
+      return undefined
+    }
+    const t = window.setTimeout(() => {
+      void window.electronAPI.storeSet('youtubeDataApiEnabled', youtubeDataApiEnabled)
+      void window.electronAPI.storeSet('youtubeDataApiKey', youtubeDataApiKey)
+    }, 400)
+    return () => window.clearTimeout(t)
+  }, [youtubeDataApiEnabled, youtubeDataApiKey, youtubeDataApiHydrated])
 
   useEffect(() => {
     if (!window.electronAPI) {
@@ -585,6 +629,56 @@ const SettingsView: React.FC = () => {
     toast.success(`Removed "${m}" from list`)
   }
 
+  const openYoutubeDocUrl = async (url: string) => {
+    if (!window.electronAPI?.openExternal) {
+      window.open(url, '_blank', 'noopener,noreferrer')
+      return
+    }
+    const r = await window.electronAPI.openExternal(url)
+    if (!r.ok) {
+      toast.error(r.error ?? 'Could not open link')
+    }
+  }
+
+  const handleYoutubeDiscoveryCheck = async () => {
+    if (!serverUrl) {
+      toast.error('Python API is not running')
+      return
+    }
+    setYoutubeDiscoveryBusy(true)
+    setYoutubeDiscoverySummary(null)
+    try {
+      const res = await fetch(joinServerUrl(serverUrl, '/reference/youtube-data-api/discovery'))
+      const text = await res.text()
+      let body: Record<string, unknown> = {}
+      try {
+        body = JSON.parse(text) as Record<string, unknown>
+      } catch {
+        body = {}
+      }
+      if (!res.ok) {
+        const detail = body['detail']
+        const det =
+          typeof detail === 'string'
+            ? detail
+            : detail !== null && typeof detail === 'object'
+              ? JSON.stringify(detail)
+              : text.slice(0, 400)
+        toast.error(det || `HTTP ${res.status}`)
+        return
+      }
+      const rev = typeof body.revision === 'string' ? body.revision : '—'
+      const title = typeof body.title === 'string' ? body.title : 'YouTube Data API v3'
+      const fetched = typeof body.fetched_at === 'string' ? body.fetched_at : ''
+      setYoutubeDiscoverySummary(`${title} · revision ${rev} · fetched ${fetched}`)
+      toast.success('Loaded discovery document from Google')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Discovery check failed')
+    } finally {
+      setYoutubeDiscoveryBusy(false)
+    }
+  }
+
   const handleResetSettings = async () => {
     if (confirm('Are you sure you want to reset all settings to defaults?')) {
       await window.electronAPI.storeSet('outputDirectory', '')
@@ -609,6 +703,9 @@ const SettingsView: React.FC = () => {
       await window.electronAPI.storeSet('anthropicModel', d.anthropicModel)
       await window.electronAPI.storeSet('googleGeminiApiKey', d.googleGeminiApiKey)
       await window.electronAPI.storeSet('googleGeminiModel', d.googleGeminiModel)
+      const ytd = YOUTUBE_DATA_API_STORE_DEFAULTS
+      await window.electronAPI.storeSet('youtubeDataApiEnabled', ytd.youtubeDataApiEnabled)
+      await window.electronAPI.storeSet('youtubeDataApiKey', ytd.youtubeDataApiKey)
       await window.electronAPI.storeDelete(OLLAMA_MODELS_CACHE_STORE_KEY)
       setOutputDirectory('')
       setPythonPath('')
@@ -630,6 +727,9 @@ const SettingsView: React.FC = () => {
       setAnthropicModel(d.anthropicModel)
       setGoogleGeminiApiKey(d.googleGeminiApiKey)
       setGoogleGeminiModel(d.googleGeminiModel)
+      setYoutubeDataApiEnabled(YOUTUBE_DATA_API_STORE_DEFAULTS.youtubeDataApiEnabled)
+      setYoutubeDataApiKey(YOUTUBE_DATA_API_STORE_DEFAULTS.youtubeDataApiKey)
+      setYoutubeDiscoverySummary(null)
       setOllamaModelList([])
       setOllamaModelManualOpen(false)
       setOllamaManualDraft('')
@@ -648,7 +748,7 @@ const SettingsView: React.FC = () => {
       if (!r.success) {
         toast.error(r.error ?? 'Failed to restart API server')
       } else {
-        toast.success('Python API restarted with your download settings')
+        toast.success('Python API restarted with your latest settings')
         void useAppStore.getState().checkServerStatus()
       }
     } catch (e) {
@@ -950,9 +1050,94 @@ const SettingsView: React.FC = () => {
             Restart API server
           </button>
           <p className="text-xs text-space-500 max-w-xl">
-            The Python process reads these values when it starts. After changing sliders, restart once so concurrency
-            and FFmpeg settings apply (running jobs should finish or be cancelled first if needed).
+            The Python process reads environment (concurrency, FFmpeg, optional YouTube Data API key) when it starts.
+            After changing those, restart once so values apply (finish or cancel running jobs first if needed).
           </p>
+        </div>
+      </motion.div>
+
+      {/* Optional YouTube Data API v3 */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.16 }}
+        className="glass-card p-6"
+      >
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center">
+            <BookOpen className="w-5 h-5 text-red-300" />
+          </div>
+          <div>
+            <h3 className="font-semibold text-white">YouTube Data API (optional)</h3>
+            <p className="text-sm text-space-400">
+              Off by default. When enabled with an API key, video metadata and comments use Google&apos;s official API
+              (subject to quota). Transcripts, thumbnails, and downloads still use the existing browser/yt-dlp paths.
+              Captions via Data API typically require OAuth — use browser scraping for captions if you need them without
+              OAuth.
+            </p>
+          </div>
+        </div>
+
+        <label className="flex cursor-pointer items-center gap-2 text-sm text-space-200 mb-4">
+          <input
+            type="checkbox"
+            className="rounded border-glass-border"
+            checked={youtubeDataApiEnabled}
+            onChange={(e) => setYoutubeDataApiEnabled(e.target.checked)}
+          />
+          Use YouTube Data API v3 for video metadata and comments (requires API key and API restart)
+        </label>
+
+        <div className={youtubeDataApiEnabled ? 'opacity-100' : 'opacity-70'}>
+          <label className="block text-sm font-medium text-space-200 mb-1">API key</label>
+          <input
+            type="password"
+            autoComplete="off"
+            value={youtubeDataApiKey}
+            onChange={(e) => setYoutubeDataApiKey(e.target.value)}
+            placeholder="Paste YouTube Data API key"
+            className="futuristic-input w-full max-w-lg px-3 py-2 mb-4"
+          />
+        </div>
+
+        <div className="border-t border-glass-border/80 pt-4">
+          <p className="text-xs font-medium text-space-300 mb-2">Official documentation (opens in your browser)</p>
+          <ul className="space-y-1.5 mb-4">
+            {YOUTUBE_DATA_API_DOC_LINKS.map((link) => (
+              <li key={link.url}>
+                <button
+                  type="button"
+                  onClick={() => void openYoutubeDocUrl(link.url)}
+                  className="inline-flex items-center gap-1.5 text-sm text-neon-cyan hover:underline"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                  {link.label}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => void handleYoutubeDiscoveryCheck()}
+              disabled={youtubeDiscoveryBusy || !serverUrl}
+              className="futuristic-btn flex items-center gap-2 px-4 py-2 text-sm disabled:opacity-50"
+            >
+              {youtubeDiscoveryBusy ? (
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-neon-blue/40 border-t-neon-blue" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              Check discovery revision
+            </button>
+            <p className="text-xs text-space-500 max-w-md">
+              Fetches Google&apos;s live discovery JSON for v3 (revision + title) through the Python API — verifies
+              connectivity, not quota on your key.
+            </p>
+          </div>
+          {youtubeDiscoverySummary ? (
+            <p className="text-xs text-space-400 mt-3 font-mono break-all">{youtubeDiscoverySummary}</p>
+          ) : null}
         </div>
       </motion.div>
 

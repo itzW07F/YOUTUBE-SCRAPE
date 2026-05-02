@@ -19,12 +19,208 @@ import { openapiHasPostPath } from '../utils/analyticsApiProbe'
 import { joinServerUrl } from '../utils/joinServerUrl'
 import { readGuiAnalyticsLlmOverlay } from '../utils/guiAnalyticsLlmOverlay'
 import { extractFastApiErrorDetail } from '../utils/fastApiErrorDetail'
-import type { AnalyticsSnapshot, OllamaReportPayload } from '../types/analyticsShared'
+import type { AnalyticsSnapshot, MacroBriefTiming, OllamaReportPayload } from '../types/analyticsShared'
 import { useAnalyticsStore } from '../stores/analyticsStore'
 import { ANALYTICS_METADATA_JOB_PREFIX } from '../constants/jobPrefixes'
 import { normalizeAnalyticsOutputDirKey } from '../utils/analyticsPathUtils'
 import { AnalyticsUserNotesPanel } from './AnalyticsUserNotesPanel'
 import { AnalyticsChatPanel } from './AnalyticsChatPanel'
+
+function formatDurationSec(ms: number): string {
+  if (ms <= 0) return '0s'
+  const s = ms / 1000
+  if (s < 60) return `${s.toFixed(s >= 10 ? 0 : 1)}s`
+  const m = Math.floor(s / 60)
+  const r = s - m * 60
+  return `${m}m ${r < 10 ? r.toFixed(1) : Math.round(r)}s`
+}
+
+/**
+ * Sleek futuristic loading animation for AI macro brief generation.
+ * Displays pulsing orbs, animated gradient rings, and processing status text.
+ */
+function MacroBriefLoadingAnimation(): JSX.Element {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -10 }}
+      transition={{ duration: 0.4, ease: 'easeOut' }}
+      className="relative overflow-hidden rounded-xl border border-neon-purple/30 bg-gradient-to-br from-space-900/90 via-space-950/95 to-space-900/90 p-8"
+    >
+      {/* Animated background grid */}
+      <div className="absolute inset-0 opacity-10">
+        <div
+          className="h-full w-full"
+          style={{
+            backgroundImage: `
+              linear-gradient(rgba(139, 92, 246, 0.3) 1px, transparent 1px),
+              linear-gradient(90deg, rgba(139, 92, 246, 0.3) 1px, transparent 1px)
+            `,
+            backgroundSize: '40px 40px',
+          }}
+        />
+      </div>
+
+      {/* Glowing orb cluster */}
+      <div className="relative flex flex-col items-center justify-center gap-6">
+        {/* Central orb with rings */}
+        <div className="relative flex items-center justify-center">
+          {/* Outer pulsing ring */}
+          <motion.div
+            className="absolute h-32 w-32 rounded-full border-2 border-neon-purple/40"
+            animate={{
+              scale: [1, 1.3, 1],
+              opacity: [0.6, 0.2, 0.6],
+              rotate: [0, 180, 360],
+            }}
+            transition={{
+              duration: 3,
+              repeat: Infinity,
+              ease: 'easeInOut',
+            }}
+          />
+
+          {/* Middle ring */}
+          <motion.div
+            className="absolute h-24 w-24 rounded-full border border-neon-cyan/50"
+            animate={{
+              scale: [1.1, 0.9, 1.1],
+              opacity: [0.4, 0.8, 0.4],
+              rotate: [360, 180, 0],
+            }}
+            transition={{
+              duration: 2.5,
+              repeat: Infinity,
+              ease: 'easeInOut',
+            }}
+          />
+
+          {/* Inner glowing core */}
+          <motion.div
+            className="relative flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-neon-purple via-violet-600 to-purple-800 shadow-lg shadow-neon-purple/50"
+            animate={{
+              scale: [1, 1.1, 1],
+              boxShadow: [
+                '0 0 20px rgba(139, 92, 246, 0.4)',
+                '0 0 40px rgba(139, 92, 246, 0.6)',
+                '0 0 20px rgba(139, 92, 246, 0.4)',
+              ],
+            }}
+            transition={{
+              duration: 1.5,
+              repeat: Infinity,
+              ease: 'easeInOut',
+            }}
+          >
+            <Sparkles className="h-7 w-7 text-white" />
+          </motion.div>
+
+          {/* Orbiting particles */}
+          {[...Array(3)].map((_, i) => (
+            <motion.div
+              key={i}
+              className="absolute h-2 w-2 rounded-full bg-neon-cyan"
+              style={{
+                offsetPath: 'circle(50px)',
+              }}
+              animate={{
+                offsetDistance: ['0%', '100%'],
+                opacity: [0.3, 1, 0.3],
+                scale: [0.8, 1.2, 0.8],
+              }}
+              transition={{
+                duration: 2 + i * 0.5,
+                repeat: Infinity,
+                ease: 'linear',
+                delay: i * 0.6,
+              }}
+            />
+          ))}
+        </div>
+
+        {/* Status text with typewriter-like reveal */}
+        <div className="flex flex-col items-center gap-2">
+          <motion.div
+            className="flex items-center gap-2 text-lg font-semibold text-neon-purple"
+            animate={{ opacity: [0.7, 1, 0.7] }}
+            transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
+          >
+            <span>Synthesizing insights</span>
+            <motion.span
+              animate={{ opacity: [0, 1, 0] }}
+              transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+            >
+              ...
+            </motion.span>
+          </motion.div>
+
+          <motion.p
+            className="text-sm text-space-400"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.5 }}
+          >
+            Analyzing comment patterns, sentiment, and themes
+          </motion.p>
+
+          {/* Progress indicators */}
+          <div className="mt-4 flex items-center gap-3">
+            {['Indexing', 'Embedding', 'Retrieving', 'Synthesizing'].map((step, i) => (
+              <motion.div
+                key={step}
+                className="flex items-center gap-1.5"
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.2 }}
+              >
+                <motion.div
+                  className="h-2 w-2 rounded-full bg-neon-purple"
+                  animate={{
+                    backgroundColor: [
+                      'rgb(139, 92, 246)',
+                      'rgb(6, 182, 212)',
+                      'rgb(139, 92, 246)',
+                    ],
+                    scale: [1, 1.3, 1],
+                  }}
+                  transition={{
+                    duration: 1.2,
+                    repeat: Infinity,
+                    delay: i * 0.15,
+                  }}
+                />
+                <span className="text-xs text-space-500">{step}</span>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+
+        {/* Decorative corner accents */}
+        <div className="absolute left-2 top-2 h-6 w-6 border-l-2 border-t-2 border-neon-purple/30" />
+        <div className="absolute right-2 top-2 h-6 w-6 border-r-2 border-t-2 border-neon-purple/30" />
+        <div className="absolute bottom-2 left-2 h-6 w-6 border-b-2 border-l-2 border-neon-purple/30" />
+        <div className="absolute bottom-2 right-2 h-6 w-6 border-b-2 border-r-2 border-neon-purple/30" />
+      </div>
+    </motion.div>
+  )
+}
+
+function macroBriefTimingSummary(t: MacroBriefTiming, fromCache: boolean): string {
+  if (fromCache) {
+    return `${formatDurationSec(t.total_ms)} to load (cache + folder precheck)`
+  }
+  const bits: string[] = [`${formatDurationSec(t.total_ms)} server total`]
+  if (t.rag_resolve_ms > 0) bits.push(`${formatDurationSec(t.rag_resolve_ms)} RAG`)
+  if (t.digest_build_ms > 0) bits.push(`${formatDurationSec(t.digest_build_ms)} digest build`)
+  if (t.ensure_ready_ms > 0) bits.push(`${formatDurationSec(t.ensure_ready_ms)} LLM ready`)
+  bits.push(`${formatDurationSec(t.llm_main_ms)} main LLM`)
+  if (t.llm_repair_ms > 0) bits.push(`${formatDurationSec(t.llm_repair_ms)} repair`)
+  if (t.llm_refill_ms > 0) bits.push(`${formatDurationSec(t.llm_refill_ms)} refill`)
+  if (t.llm_plain_ms > 0) bits.push(`${formatDurationSec(t.llm_plain_ms)} plain fallback`)
+  if (t.llm_plain_repair_ms > 0) bits.push(`${formatDurationSec(t.llm_plain_repair_ms)} plain repair`)
+  return bits.join(' · ')
+}
 
 async function augmentAnalyticsHttpError(serverUrl: string, res: Response, bodyText: string, routePath: string): Promise<string> {
   let msg = bodyText.trim() || `HTTP ${res.status}`
@@ -1186,7 +1382,7 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
                 AI macro brief (Ollama)
               </span>
             }
-            subtitle="Optional LLM synthesis from scraped comments (configure Ollama in Settings)."
+            subtitle="LLM synthesis from scraped comments. With Vector DB + RAG, the brief requests more retrieved chunks (20-32, capped at 32) than a low chat top_k so coverage scales with big threads; your max context cap still applies. Prompts ask for richer summaries when evidence is large — Force refresh after updates."
             contentClassName="space-y-4 p-5"
             defaultOpen
             headerRight={
@@ -1224,11 +1420,19 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
               </pre>
             ) : null}
 
+            {llmLoading ? <MacroBriefLoadingAnimation /> : null}
+
             {llmReport ? (
               <div className="space-y-3 rounded-lg border border-white/10 bg-space-900/40 p-4">
                 <p className="text-xs text-space-500">
                   Model {llmReport.model} · {llmReport.generated_at}{' '}
                   {llmReport.from_cache ? '(cache)' : '(fresh)'}
+                  {llmReport.macro_brief_timing ? (
+                    <>
+                      {' '}
+                      · {macroBriefTimingSummary(llmReport.macro_brief_timing, llmReport.from_cache)}
+                    </>
+                  ) : null}
                 </p>
                 <CollapsibleSection
                   className="rounded-lg border border-white/10 bg-space-950/30 overflow-hidden"

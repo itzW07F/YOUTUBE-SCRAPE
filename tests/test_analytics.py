@@ -19,6 +19,7 @@ from youtube_scrape.application.analytics_ollama_report import (
     generate_ollama_macro_report,
     macro_brief_is_substantive,
     parse_macro_brief,
+    try_parse_macro_brief_flexible,
 )
 from youtube_scrape.application.analytics_snapshot import (
     build_analytics_snapshot,
@@ -164,6 +165,23 @@ def test_parse_macro_brief_extracts_json_from_prose() -> None:
     raw = f"Analysis follows:\n{blob}\n(end)"
     brief = parse_macro_brief(raw)
     assert brief.themes == ["tidbit"]
+
+
+def test_try_parse_macro_brief_flexible_mid_fence() -> None:
+    payload = {
+        "themes": ["fence"],
+        "sentiment_overview": "y" * 20,
+        "suggestions_and_requests": "",
+        "complaints_and_criticism": "",
+        "agreements_and_disagreements": "",
+        "notable_quotes": [],
+        "caveats": [],
+    }
+    inner = json.dumps(payload)
+    raw = f"Here is the briefing:\n```json\n{inner}\n```\nThanks."
+    brief = try_parse_macro_brief_flexible(raw)
+    assert brief is not None
+    assert brief.themes == ["fence"]
 
 
 def test_macro_brief_is_substantive_empty_vs_filled() -> None:
@@ -326,18 +344,162 @@ async def test_generate_ollama_macro_report_uses_mock(analytics_output: Path, mo
         _ = settings
         return _FakeLlm()
 
-    with patch(
-        "youtube_scrape.application.analytics_ollama_report.build_analytics_llm",
-        side_effect=_fake_build,
+    async def _no_rag(*args: object, **kwargs: object) -> tuple[None, dict[str, object]]:
+        _ = args, kwargs
+        return None, {
+            "analytics_rag_mode": None,
+            "analytics_rag_chunks_used": None,
+            "analytics_rag_index_build_ms": None,
+            "analytics_rag_embed_ms": None,
+        }
+
+    with (
+        patch(
+            "youtube_scrape.application.analytics_ollama_report.build_analytics_llm",
+            side_effect=_fake_build,
+        ),
+        patch(
+            "youtube_scrape.application.analytics_scrape_rag.try_resolve_hybrid_context_pack",
+            side_effect=_no_rag,
+        ),
     ):
         settings = Settings()
         report = await generate_ollama_macro_report(analytics_output, settings=settings, force_refresh=True)
 
     assert report.brief.themes == ["testing"]
     assert report.from_cache is False
-
+    assert report.comment_digest_meta.get("digest_source") == "comment_sample"
+    assert report.macro_brief_timing is not None
+    assert report.macro_brief_timing.llm_main_ms >= 0
+    assert report.macro_brief_timing.total_ms >= report.macro_brief_timing.llm_main_ms
     cache_path = analytics_output / "analytics_llm_cache.json"
     assert cache_path.is_file()
+
+
+@pytest.mark.asyncio
+async def test_generate_ollama_macro_report_uses_rag_when_hybrid(
+    analytics_output: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OUTPUT_DIR", str(analytics_output.parent))
+    monkeypatch.setenv("YOUTUBE_SCRAPE_ANALYTICS_RAG_ENABLED", "true")
+    monkeypatch.setenv("YOUTUBE_SCRAPE_ANALYTICS_LLM_PROVIDER", "ollama")
+
+    from youtube_scrape.application.analytics_scrape_context_pack import ScrapeContextPack
+
+    body = "# Retrieved\n\n" + ("excerpt text " * 120)
+    assert len(body) >= 800
+    rag_pack = ScrapeContextPack(text=body, warnings=["synthetic"])
+    captured_kwargs: dict[str, object] = {}
+
+    async def _hybrid(*args: object, **kwargs: object) -> tuple[ScrapeContextPack, dict[str, object]]:
+        captured_kwargs.update(kwargs)
+        return rag_pack, {
+            "analytics_rag_mode": "hybrid",
+            "analytics_rag_chunks_used": 5,
+            "analytics_rag_index_build_ms": 10,
+            "analytics_rag_embed_ms": 20,
+        }
+
+    captured_user: list[str] = []
+
+    class _FakeLlm:
+        async def ensure_ready(self, *, timeout_s: float) -> None:
+            _ = timeout_s
+
+        async def chat(self, **kwargs: object) -> str:
+            captured_user.append(str(kwargs.get("user", "")))
+            return json.dumps(
+                {
+                    "themes": ["rag"],
+                    "sentiment_overview": "x" * 20,
+                    "suggestions_and_requests": "",
+                    "complaints_and_criticism": "",
+                    "agreements_and_disagreements": "",
+                    "notable_quotes": [],
+                    "caveats": [],
+                }
+            )
+
+    with (
+        patch(
+            "youtube_scrape.application.analytics_ollama_report.build_analytics_llm",
+            return_value=_FakeLlm(),
+        ),
+        patch(
+            "youtube_scrape.application.analytics_scrape_rag.try_resolve_hybrid_context_pack",
+            side_effect=_hybrid,
+        ),
+    ):
+        settings = Settings()
+        report = await generate_ollama_macro_report(analytics_output, settings=settings, force_refresh=True)
+
+    assert captured_kwargs.get("rag_top_k") == 20
+    assert report.comment_digest_meta.get("macro_rag_top_k") == 20
+    assert report.macro_brief_timing is not None
+    assert report.macro_brief_timing.rag_resolve_ms >= 0
+    assert report.comment_digest_meta.get("digest_source") == "rag_hybrid"
+    assert report.comment_digest_meta.get("analytics_rag_chunks_used") == 5
+    assert captured_user and "RETRIEVED CONTEXT" in captured_user[0]
+    assert report.brief.themes == ["rag"]
+
+    cache_obj = json.loads((analytics_output / "analytics_llm_cache.json").read_text(encoding="utf-8"))
+    assert cache_obj.get("macro_context_mode") == "rag_hybrid"
+
+
+@pytest.mark.asyncio
+async def test_macro_brief_rag_top_k_boost_caps_at_32(
+    analytics_output: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OUTPUT_DIR", str(analytics_output.parent))
+    monkeypatch.setenv("YOUTUBE_SCRAPE_ANALYTICS_RAG_ENABLED", "true")
+    monkeypatch.setenv("YOUTUBE_SCRAPE_ANALYTICS_LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("YOUTUBE_SCRAPE_ANALYTICS_RAG_TOP_K", "48")
+
+    from youtube_scrape.application.analytics_scrape_context_pack import ScrapeContextPack
+
+    body = "# Retrieved\n\n" + ("excerpt text " * 120)
+    captured_kwargs: dict[str, object] = {}
+
+    async def _hybrid(*_a: object, **kwargs: object) -> tuple[ScrapeContextPack, dict[str, object]]:
+        captured_kwargs.update(kwargs)
+        return ScrapeContextPack(text=body, warnings=[]), {
+            "analytics_rag_mode": "hybrid",
+            "analytics_rag_chunks_used": 8,
+            "analytics_rag_index_build_ms": 0,
+            "analytics_rag_embed_ms": 0,
+        }
+
+    class _FakeLlm:
+        async def ensure_ready(self, *, timeout_s: float) -> None:
+            _ = timeout_s
+
+        async def chat(self, **_k: object) -> str:
+            return json.dumps(
+                {
+                    "themes": ["a", "b", "c", "d"],
+                    "sentiment_overview": "x" * 20,
+                    "suggestions_and_requests": "y" * 20,
+                    "complaints_and_criticism": "z" * 20,
+                    "agreements_and_disagreements": "w" * 20,
+                    "notable_quotes": ["q1", "q2", "q3"],
+                    "caveats": [],
+                }
+            )
+
+    with (
+        patch(
+            "youtube_scrape.application.analytics_ollama_report.build_analytics_llm",
+            return_value=_FakeLlm(),
+        ),
+        patch(
+            "youtube_scrape.application.analytics_scrape_rag.try_resolve_hybrid_context_pack",
+            side_effect=_hybrid,
+        ),
+    ):
+        settings = Settings()
+        await generate_ollama_macro_report(analytics_output, settings=settings, force_refresh=True)
+
+    assert captured_kwargs.get("rag_top_k") == 32
 
 
 @pytest.mark.asyncio
@@ -447,6 +609,14 @@ def test_settings_ollama_base_url_env_without_scheme_is_normalized(monkeypatch: 
     monkeypatch.setenv("YOUTUBE_SCRAPE_OLLAMA_BASE_URL", "10.0.0.5:11434")
     got = Settings()
     assert got.ollama_base_url == "http://10.0.0.5:11434"
+
+
+def test_settings_analytics_macro_llm_timeout_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("YOUTUBE_SCRAPE_ANALYTICS_MACRO_LLM_TIMEOUT_S", raising=False)
+    monkeypatch.delenv("YOUTUBE_SCRAPE_OLLAMA_TIMEOUT_S", raising=False)
+    s = Settings()
+    assert s.analytics_macro_llm_timeout_s == 420.0
+    assert s.ollama_timeout_s == 180.0
 
 
 def test_effective_analytics_llm_gui_overlay_prefers_remote_ollama(monkeypatch: pytest.MonkeyPatch) -> None:

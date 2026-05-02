@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse
 # Add parent directories to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from api.routes import scrape, dl as download, config, batch, metadata_refresh, analytics
+from api.routes import scrape, dl as download, config, batch, metadata_refresh, analytics, reference
 from api.state import get_job_store, get_websocket_manager
 
 # Configure logging - both stdout and file
@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     os.makedirs(output_dir, exist_ok=True)
     
     logger.info(f"Server ready - output directory: {output_dir}")
-    logger.info("Router prefixes mounted: /scrape /download /config /batch /metadata /analytics")
+    logger.info("Router prefixes mounted: /scrape /download /config /batch /metadata /analytics /reference")
 
     yield
     
@@ -83,6 +83,7 @@ app.include_router(config.router, prefix="/config", tags=["config"])
 app.include_router(batch.router, prefix="/batch", tags=["batch"])
 app.include_router(metadata_refresh.router, prefix="/metadata", tags=["metadata"])
 app.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
+app.include_router(reference.router, prefix="/reference", tags=["reference"])
 
 
 @app.get("/health")

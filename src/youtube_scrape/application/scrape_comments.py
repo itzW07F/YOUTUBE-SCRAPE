@@ -18,13 +18,51 @@ from youtube_scrape.domain.innertube import (
     extract_innertube_context,
     next_endpoint,
 )
-from youtube_scrape.domain.models import ResultEnvelope
+from youtube_scrape.domain.models import CommentRecord, ResultEnvelope
 from youtube_scrape.domain.ports import BrowserSession, HttpClient
 from youtube_scrape.domain.youtube_url import parse_video_id, watch_url
 from youtube_scrape.exceptions import ContinuationError, ExtractionError
 from youtube_scrape.settings import Settings
 
 log = logging.getLogger(__name__)
+
+
+def organize_comments_hierarchical(comments: list[CommentRecord]) -> list[dict[str, Any]]:
+    """Organize flat comment records into parent threads with nested ``replies`` lists."""
+
+    parents: dict[str, dict[str, Any]] = {}
+    replies: list[dict[str, Any]] = []
+
+    for comment in comments:
+        comment_dict = comment.model_dump(mode="json")
+        if comment.is_reply:
+            replies.append(comment_dict)
+        else:
+            comment_dict["replies"] = []
+            parents[comment.comment_id] = comment_dict
+
+    orphan_replies: list[dict[str, Any]] = []
+    for reply in replies:
+        parent_id = reply.get("parent_comment_id")
+        if parent_id and parent_id in parents:
+            parents[parent_id]["replies"].append(reply)
+        else:
+            orphan_replies.append(reply)
+
+    result: list[dict[str, Any]] = []
+    for comment in comments:
+        if not comment.is_reply:
+            parent_dict = parents.get(comment.comment_id)
+            if parent_dict:
+                result.append(parent_dict)
+
+    if orphan_replies:
+        result.append({
+            "_note": "Replies whose parent comments were not found",
+            "orphan_replies": orphan_replies,
+        })
+
+    return result
 
 
 class ScrapeCommentsService:
@@ -130,7 +168,7 @@ class ScrapeCommentsService:
             )
 
         # Organize comments hierarchically: parent comments with nested replies
-        organized_comments = self._organize_comments_hierarchical(comments)
+        organized_comments = organize_comments_hierarchical(comments)
 
         data = {
             "video_id": video_id,
@@ -139,53 +177,3 @@ class ScrapeCommentsService:
             "top_level_count": len(organized_comments),
         }
         return make_envelope(settings=self._settings, kind="comments", data=data)
-
-    def _organize_comments_hierarchical(
-        self,
-        comments: list[Any],
-    ) -> list[dict[str, Any]]:
-        """Organize flat comment list into hierarchical structure.
-
-        Parent comments contain a "replies" list with their reply comments.
-        This makes it clear which replies belong to which parent comment.
-        """
-        # First pass: separate parents and replies
-        parents: dict[str, dict[str, Any]] = {}
-        replies: list[dict[str, Any]] = []
-
-        for comment in comments:
-            comment_dict = comment.model_dump(mode="json")
-            if comment.is_reply:
-                replies.append(comment_dict)
-            else:
-                comment_dict["replies"] = []
-                parents[comment.comment_id] = comment_dict
-
-        # Second pass: attach replies to their parents
-        orphan_replies: list[dict[str, Any]] = []
-        for reply in replies:
-            parent_id = reply.get("parent_comment_id")
-            if parent_id and parent_id in parents:
-                parents[parent_id]["replies"].append(reply)
-            else:
-                # Parent not found (may not have been scraped), keep as orphan
-                orphan_replies.append(reply)
-
-        # Build result: parents in order, with their replies attached
-        result: list[dict[str, Any]] = []
-        seen_reply_ids = set()
-
-        for comment in comments:
-            if not comment.is_reply:
-                parent_dict = parents.get(comment.comment_id)
-                if parent_dict:
-                    result.append(parent_dict)
-
-        # Add any orphan replies at the end with a special marker
-        if orphan_replies:
-            result.append({
-                "_note": "Replies whose parent comments were not found",
-                "orphan_replies": orphan_replies,
-            })
-
-        return result

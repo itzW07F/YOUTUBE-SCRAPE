@@ -540,6 +540,21 @@ async def ollama_chat_message(
                     f"Cannot connect to Ollama at {root.rstrip('/')}. "
                     "Start Ollama or set YOUTUBE_SCRAPE_OLLAMA_BASE_URL."
                 ) from exc
+            except httpx.ReadTimeout as exc:
+                log.warning(
+                    f"{ctx}_read_timeout",
+                    extra={
+                        "attempt": attempt_label,
+                        "timeout_s": timeout_s,
+                        "elapsed_ms": round((time.monotonic() - t0) * 1000),
+                    },
+                )
+                raise OllamaHttpError(
+                    f"Ollama chat timed out after {timeout_s:.0f}s waiting for the full response. "
+                    "Large prompts (e.g. AI macro brief over many comments) or slow/remote models may need "
+                    "YOUTUBE_SCRAPE_ANALYTICS_MACRO_LLM_TIMEOUT_S (macro brief; default 420) or "
+                    "YOUTUBE_SCRAPE_OLLAMA_TIMEOUT_S (chat and other calls)."
+                ) from exc
             except httpx.HTTPError as exc:
                 log.warning(
                     f"{ctx}_http_transport_error",
@@ -679,6 +694,21 @@ async def ollama_chat_messages(
                 raise OllamaHttpError(
                     f"Cannot connect to Ollama at {root.rstrip('/')}. "
                     "Start Ollama or set YOUTUBE_SCRAPE_OLLAMA_BASE_URL."
+                ) from exc
+            except httpx.ReadTimeout as exc:
+                log.warning(
+                    f"{ctx}_read_timeout",
+                    extra={
+                        "attempt": attempt_label,
+                        "timeout_s": timeout_s,
+                        "elapsed_ms": round((time.monotonic() - t0) * 1000),
+                    },
+                )
+                raise OllamaHttpError(
+                    f"Ollama chat timed out after {timeout_s:.0f}s waiting for the full response. "
+                    "Large prompts (e.g. AI macro brief over many comments) or slow/remote models may need "
+                    "YOUTUBE_SCRAPE_ANALYTICS_MACRO_LLM_TIMEOUT_S (macro brief; default 420) or "
+                    "YOUTUBE_SCRAPE_OLLAMA_TIMEOUT_S (chat and other calls)."
                 ) from exc
             except httpx.HTTPError as exc:
                 raise OllamaHttpError(f"Ollama request failed: {exc}") from exc

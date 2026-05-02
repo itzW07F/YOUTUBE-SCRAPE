@@ -645,10 +645,13 @@ async def try_resolve_hybrid_context_pack(
     *,
     user_query: str,
     settings: Settings,
+    rag_top_k: int | None = None,
 ) -> tuple[ScrapeContextPack | None, dict[str, Any]]:
     """Return hybrid pack or ``None`` (caller uses legacy ``build_scrape_context_pack``).
 
     Second value carries diagnostics for ``AnalyticsChatResponse`` (subset may be empty).
+
+    ``rag_top_k`` overrides ``settings.analytics_rag_top_k`` when set (macro brief uses a higher floor).
     """
 
     empty_diag: dict[str, Any] = {
@@ -681,12 +684,14 @@ async def try_resolve_hybrid_context_pack(
         )
         return None, empty_diag
 
+    effective_top_k = rag_top_k if rag_top_k is not None else settings.analytics_rag_top_k
     log.info(
         "analytics_rag_eligible_and_starting",
         extra={
             "folder": output_dir.name,
             "embed_model": settings.ollama_embed_model,
-            "top_k": settings.analytics_rag_top_k,
+            "top_k": effective_top_k,
+            "top_k_override": rag_top_k is not None,
         },
     )
 
@@ -734,7 +739,7 @@ async def try_resolve_hybrid_context_pack(
             user_query=user_query,
             embed_model=settings.ollama_embed_model.strip() or "nomic-embed-text",
             base_url=settings.ollama_base_url,
-            top_k=settings.analytics_rag_top_k,
+            top_k=effective_top_k,
             timeout_s=settings.ollama_timeout_s,
             warnings=local_warnings,
         )

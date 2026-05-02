@@ -282,6 +282,20 @@ app.whenReady().then(() => {
     await shell.showItemInFolder(path)
   })
 
+  ipcMain.handle('shell:openExternal', async (_, url: string) => {
+    const u = typeof url === 'string' ? url.trim() : ''
+    if (!/^https?:\/\//i.test(u)) {
+      return { ok: false as const, error: 'Only http(s) URLs are allowed' }
+    }
+    try {
+      await shell.openExternal(u)
+      return { ok: true as const }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return { ok: false as const, error: msg }
+    }
+  })
+
   // IPC handlers for app info
   ipcMain.handle('app:version', () => {
     return app.getVersion()

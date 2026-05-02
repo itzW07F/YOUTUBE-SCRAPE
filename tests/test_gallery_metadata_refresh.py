@@ -12,6 +12,7 @@ from youtube_scrape.application.gallery_metadata_refresh import (
     resolve_output_dir_for_refresh,
     utc_now_iso_z,
 )
+from youtube_scrape.application.video_json_comment_sync import metadata_with_comment_count_from_scraped_comments
 
 
 def test_resolve_output_dir_accepts_nested_subdir(tmp_path: Path) -> None:
@@ -96,3 +97,31 @@ def test_resolve_output_dir_fails_if_no_root_matches(tmp_path: Path) -> None:
 
 def test_utc_now_iso_z_ends_with_z() -> None:
     assert utc_now_iso_z().endswith("Z")
+
+
+def test_metadata_with_comment_count_fills_from_comments_json(tmp_path: Path) -> None:
+    out = tmp_path / "scrape"
+    out.mkdir()
+    comments = {"schema_version": "1", "kind": "comments", "data": {"total_count": 945, "comments": []}}
+    (out / "comments.json").write_text(json.dumps(comments), encoding="utf-8")
+    meta = {"video_id": "x", "title": "t"}
+    merged = metadata_with_comment_count_from_scraped_comments(out, meta)
+    assert merged["comment_count"] == 945
+
+
+def test_metadata_with_comment_count_skips_when_metadata_has_total(tmp_path: Path) -> None:
+    out = tmp_path / "scrape"
+    out.mkdir()
+    comments = {"schema_version": "1", "kind": "comments", "data": {"total_count": 1, "comments": []}}
+    (out / "comments.json").write_text(json.dumps(comments), encoding="utf-8")
+    meta = {"video_id": "x", "comment_count": 50}
+    merged = metadata_with_comment_count_from_scraped_comments(out, meta)
+    assert merged["comment_count"] == 50
+
+
+def test_metadata_with_comment_count_no_comments_file_leaves_missing(tmp_path: Path) -> None:
+    out = tmp_path / "scrape"
+    out.mkdir()
+    meta = {"video_id": "x"}
+    merged = metadata_with_comment_count_from_scraped_comments(out, meta)
+    assert merged.get("comment_count") is None

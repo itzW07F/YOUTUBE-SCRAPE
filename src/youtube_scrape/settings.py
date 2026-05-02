@@ -124,6 +124,15 @@ class Settings(BaseSettings):
         description='Model name/tag passed to Ollama /api/chat (must exist locally; try `ollama list`).',
     )
     ollama_timeout_s: float = Field(default=180.0, ge=10.0, le=900.0, description="HTTP timeout for LLM calls.")
+    analytics_macro_llm_timeout_s: float = Field(
+        default=420.0,
+        ge=60.0,
+        le=900.0,
+        description=(
+            "Timeout for POST /analytics/ollama-report LLM passes (large comment digest + JSON repair rounds). "
+            "Defaults higher than ollama_timeout_s so remote/slow models can finish."
+        ),
+    )
 
     analytics_llm_provider: AnalyticsLlmProvider = Field(
         default="ollama",
@@ -171,6 +180,17 @@ class Settings(BaseSettings):
     ollama_embed_model: str = Field(
         default="nomic-embed-text",
         description="Ollama embedding model for analytics RAG (POST /api/embed, legacy /api/embeddings); pull separately from chat model.",
+    )
+    youtube_data_api_enabled: bool = Field(
+        default=False,
+        description=(
+            "When true and youtube_data_api_key is set, video metadata and comments can use YouTube Data API v3 "
+            "(see GUI settings / env) instead of the browser pipeline for those steps."
+        ),
+    )
+    youtube_data_api_key: str = Field(
+        default="",
+        description="YouTube Data API v3 key (browser-free metadata/comments when youtube_data_api_enabled).",
     )
 
     @field_validator("log_level")

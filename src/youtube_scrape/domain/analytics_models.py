@@ -141,6 +141,20 @@ class AnalyticsOllamaModelsPayload(BaseModel):
     models: list[str] = Field(default_factory=list)
 
 
+class MacroBriefTiming(BaseModel):
+    """Wall-clock phases for ``POST /analytics/ollama-report`` (milliseconds, server-side)."""
+
+    total_ms: int = Field(..., ge=0, description="End-to-end time for this handler (excluding HTTP client overhead).")
+    rag_resolve_ms: int = Field(default=0, ge=0, description="Hybrid RAG pack resolution (embed + retrieve + merge).")
+    digest_build_ms: int = Field(default=0, ge=0, description="Stratified digest build when not using RAG context.")
+    ensure_ready_ms: int = Field(default=0, ge=0, description="Provider readiness probe (e.g. Ollama model check).")
+    llm_main_ms: int = Field(default=0, ge=0, description="Primary structured JSON generation call.")
+    llm_repair_ms: int = Field(default=0, ge=0, description="JSON repair pass after a parse failure.")
+    llm_refill_ms: int = Field(default=0, ge=0, description="Refill pass when the brief parsed but was empty.")
+    llm_plain_ms: int = Field(default=0, ge=0, description="Plain JSON fallback (no response_format) when needed.")
+    llm_plain_repair_ms: int = Field(default=0, ge=0, description="Repair after plain fallback parse failure.")
+
+
 class OllamaReportPayload(BaseModel):
     """API response body for ``/analytics/ollama-report``."""
 
@@ -151,6 +165,10 @@ class OllamaReportPayload(BaseModel):
     from_cache: bool
     comment_digest_meta: dict[str, Any] = Field(default_factory=dict)
     brief: OllamaMacroBrief
+    macro_brief_timing: MacroBriefTiming | None = Field(
+        default=None,
+        description="Server-side latency breakdown; omitted only on older clients (always set by current API).",
+    )
 
 
 class AnalyticsChatMessage(BaseModel):
@@ -243,6 +261,10 @@ class AnalyticsLlmCacheFile(BaseModel):
     brief_schema_version: str
     generated_at: str
     brief: OllamaMacroBrief
+    macro_context_mode: str = Field(
+        default="comment_sample",
+        description="comment_sample = stratified comment digest; rag_hybrid = Vector DB retrieval context.",
+    )
 
 
 class RagStatusPayload(BaseModel):

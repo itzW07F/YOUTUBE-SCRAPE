@@ -75,6 +75,18 @@ export interface OllamaMacroBrief {
   caveats: string[]
 }
 
+export interface MacroBriefTiming {
+  total_ms: number
+  rag_resolve_ms: number
+  digest_build_ms: number
+  ensure_ready_ms: number
+  llm_main_ms: number
+  llm_repair_ms: number
+  llm_refill_ms: number
+  llm_plain_ms: number
+  llm_plain_repair_ms: number
+}
+
 export interface OllamaReportPayload {
   schema_version: string
   output_dir: string
@@ -83,6 +95,7 @@ export interface OllamaReportPayload {
   from_cache: boolean
   comment_digest_meta: Record<string, unknown>
   brief: OllamaMacroBrief
+  macro_brief_timing?: MacroBriefTiming | null
 }
 
 /** Client-visible chat turns mirrored in ``POST /analytics/chat`` ``messages``. */

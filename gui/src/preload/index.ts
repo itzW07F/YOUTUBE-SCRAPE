@@ -23,6 +23,8 @@ const api = {
     ipcRenderer.invoke('dialog:selectFile', filters),
   openPath: (path: string): Promise<string | void> =>
     ipcRenderer.invoke('shell:openPath', path),
+  openExternal: (url: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('shell:openExternal', url),
   showItemInFolder: (path: string): Promise<void> =>
     ipcRenderer.invoke('shell:showItemInFolder', path),
 

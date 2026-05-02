@@ -1,6 +1,6 @@
 # youtube-scrape
 
-Cross-platform **YouTube scraper** CLI, GUI, and library: yt-dlp for video downloads, Camoufox + Playwright for metadata/scraping (no YouTube Data API), with structured outputs.
+Cross-platform **YouTube scraper** CLI, GUI, and library: yt-dlp for video downloads, Camoufox + Playwright for metadata/scraping, with structured outputs. The **YouTube Data API v3** is optional (GUI toggle + API key): when enabled, video metadata and comments can be fetched officially (quota limits apply); transcripts, thumbnails, and media downloads still use the non–Data API pipelines unless extended separately.
 
 **NEW**: Professional Electron GUI with React + Tailwind CSS - [see GUI docs](gui/README.md)
 
@@ -139,6 +139,15 @@ cp config-example.yaml ~/.config/youtube-scrape/config.yaml
 2. Config file values
 3. Environment variables (`YOUTUBE_SCRAPE_*`)
 4. Built-in defaults
+
+### Optional YouTube Data API v3 (environment)
+
+For the FastAPI server / GUI backend, optional official video metadata and comments use:
+
+- `YOUTUBE_SCRAPE_YOUTUBE_DATA_API_ENABLED` — `true` or `false` (default: off)
+- `YOUTUBE_SCRAPE_YOUTUBE_DATA_API_KEY` — Data API key from Google Cloud
+
+Quota applies per [Google's quota guide](https://developers.google.com/youtube/v3/determine_quota_cost). Downloading caption text via the Data API usually requires OAuth; this project keeps transcript/caption fetching on the browser-oriented path unless you add that separately.
 
 ### Example: Minimal Config
 

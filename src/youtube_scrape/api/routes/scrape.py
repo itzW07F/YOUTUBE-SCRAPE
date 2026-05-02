@@ -3,31 +3,35 @@
 import asyncio
 import json
 import logging
-import os
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Literal, cast
+from typing import Any, Literal, cast
 
+import httpx
+from api.state import get_job_store, get_websocket_manager
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from api.state import get_job_store, get_websocket_manager
 from youtube_scrape.adapters.browser_playwright import CamoufoxBrowserSession
 from youtube_scrape.adapters.filesystem import LocalFileSink
 from youtube_scrape.adapters.http_httpx import HttpxHttpClient
-from youtube_scrape.application.download_service import DownloadService
 from youtube_scrape.application.comment_snapshot_archive import archive_existing_comments_json
+from youtube_scrape.application.download_service import DownloadService
+from youtube_scrape.application.scrape_comments import ScrapeCommentsService
+from youtube_scrape.application.scrape_fatal_access import format_fatal_watch_access_message
 from youtube_scrape.application.scrape_job_output_path import (
     default_output_path_for_video_id,
     resolve_scrape_job_output_path,
 )
-from youtube_scrape.application.video_json_comment_sync import sync_comment_count_in_video_json
-from youtube_scrape.application.scrape_comments import ScrapeCommentsService
 from youtube_scrape.application.scrape_thumbnails import ScrapeThumbnailsService
 from youtube_scrape.application.scrape_transcript import ScrapeTranscriptService
-from youtube_scrape.application.scrape_fatal_access import format_fatal_watch_access_message
 from youtube_scrape.application.scrape_video import ScrapeVideoService
+from youtube_scrape.application.video_json_comment_sync import sync_comment_count_in_video_json
+from youtube_scrape.application.youtube_data_api_scrape import (
+    scrape_comments_via_data_api,
+    scrape_video_via_data_api,
+)
 from youtube_scrape.domain.youtube_url import parse_video_id
 from youtube_scrape.settings import Settings
 
@@ -38,14 +42,14 @@ router = APIRouter()
 TranscriptFormat = Literal["txt", "vtt", "json"]
 
 # UI-oriented log lines (WebSocket + optional step metadata for the GUI).
-OPERATION_SCRAPING_LABEL: Dict[str, str] = {
+OPERATION_SCRAPING_LABEL: dict[str, str] = {
     "video": "Scraping video details",
     "thumbnails": "Scraping thumbnails",
     "transcript": "Scraping transcript",
     "comments": "Scraping comments",
     "download": "Downloading media",
 }
-OPERATION_DONE_LABEL: Dict[str, str] = {
+OPERATION_DONE_LABEL: dict[str, str] = {
     "video": "Video details saved",
     "thumbnails": "Thumbnails saved",
     "transcript": "Transcript saved",
@@ -258,6 +262,53 @@ async def _run_browser_scrape_step(
         await browser.aclose()
 
 
+async def _run_youtube_data_api_scrape_step(
+    operation: str,
+    *,
+    job_id: str,
+    request: ScrapeVideoRequest,
+    output_dir: Path,
+    _video_id: str,
+    settings: Settings,
+    manager: Any,
+) -> dict[str, Any]:
+    """Video/comments via YouTube Data API v3 (requires non-empty ``youtube_data_api_key``)."""
+    if not settings.youtube_data_api_key.strip():
+        raise ValueError(
+            "YouTube Data API key is missing. Set it in Settings (and restart the API server) or use browser scraping."
+        )
+    timeout = httpx.Timeout(settings.http_timeout_s)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        if operation == "video":
+            envelope = await scrape_video_via_data_api(url_or_id=request.url, settings=settings, client=client)
+            (output_dir / "video.json").write_text(envelope.model_dump_json(indent=2), encoding="utf-8")
+            return {"video": envelope.model_dump()}
+        if operation == "comments":
+            if request.comments_snapshot_before_write:
+                archived = archive_existing_comments_json(output_dir)
+                if archived is not None:
+                    await manager.send_log(
+                        job_id,
+                        "info",
+                        f"Previous comments.json archived to {archived.relative_to(output_dir)}",
+                    )
+            fetch_all = request.comments_fetch_all or (request.max_comments == 0)
+            max_comments_arg: int | None = None if fetch_all else request.max_comments
+            envelope = await scrape_comments_via_data_api(
+                url_or_id=request.url,
+                settings=settings,
+                client=client,
+                max_comments=max_comments_arg,
+                fetch_all=fetch_all,
+                max_replies_per_thread=request.max_replies_per_thread,
+                include_replies=True,
+            )
+            (output_dir / "comments.json").write_text(envelope.model_dump_json(indent=2), encoding="utf-8")
+            sync_comment_count_in_video_json(output_dir, envelope)
+            return {"comments": envelope.model_dump()}
+    raise ValueError(f"Unknown Data API operation: {operation}")
+
+
 _SCRAPE_JOB_SEM: asyncio.Semaphore | None = None
 
 
@@ -326,15 +377,40 @@ async def _run_scrape_job_impl(job_id: str, request: ScrapeVideoRequest) -> None
                 if operation == "download":
                     frag = await _run_download_step(request, output_dir, video_id, settings)
                 else:
-                    frag = await _run_browser_scrape_step(
-                        operation,
-                        job_id=job_id,
-                        request=request,
-                        output_dir=output_dir,
-                        video_id=video_id,
-                        settings=settings,
-                        manager=manager,
+                    if (
+                        settings.youtube_data_api_enabled
+                        and operation in ("video", "comments")
+                        and not settings.youtube_data_api_key.strip()
+                    ):
+                        raise ValueError(
+                            "YouTube Data API is enabled but no API key is set. Add your key in Settings, "
+                            "restart the Python API server, or turn the toggle off to use browser scraping."
+                        )
+                    use_data_api = (
+                        settings.youtube_data_api_enabled
+                        and bool(settings.youtube_data_api_key.strip())
+                        and operation in ("video", "comments")
                     )
+                    if use_data_api:
+                        frag = await _run_youtube_data_api_scrape_step(
+                            operation,
+                            job_id=job_id,
+                            request=request,
+                            output_dir=output_dir,
+                            _video_id=video_id,
+                            settings=settings,
+                            manager=manager,
+                        )
+                    else:
+                        frag = await _run_browser_scrape_step(
+                            operation,
+                            job_id=job_id,
+                            request=request,
+                            output_dir=output_dir,
+                            video_id=video_id,
+                            settings=settings,
+                            manager=manager,
+                        )
                 results.update(frag)
                 done_msg = OPERATION_DONE_LABEL.get(operation, f"Finished {operation}")
                 await manager.send_log(
@@ -479,7 +555,6 @@ async def scrape_video(
     # Generate job ID
     job_id = generate_job_id()
     output_dir = resolve_scrape_output_directory(request)
-    video_id = extract_video_id(request.url)
 
     # Create job entry
     jobs[job_id] = {
@@ -512,7 +587,7 @@ async def scrape_comments(
     url: str,
     max_comments: int = Query(default=0, ge=0, le=10000),
     max_replies_per_thread: int | None = Query(default=None),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Start a comments-only scrape job."""
     request = ScrapeVideoRequest(
         url=url,
@@ -550,7 +625,7 @@ async def scrape_comments(
 async def scrape_transcript(
     url: str,
     fmt: str = "txt"
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Start a transcript-only scrape job."""
     request = ScrapeVideoRequest(
         url=url,
@@ -586,7 +661,7 @@ async def scrape_transcript(
 @router.post("/thumbnails")
 async def scrape_thumbnails(
     url: str
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Start a thumbnails-only scrape job."""
     request = ScrapeVideoRequest(
         url=url,

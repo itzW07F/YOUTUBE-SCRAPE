@@ -43,6 +43,8 @@ export type PythonSpawnEnvExtras = Partial<{
   YOUTUBE_SCRAPE_GOOGLE_GEMINI_MODEL: string
   YOUTUBE_SCRAPE_ANALYTICS_RAG_ENABLED: string
   YOUTUBE_SCRAPE_OLLAMA_EMBED_MODEL: string
+  YOUTUBE_SCRAPE_YOUTUBE_DATA_API_ENABLED: string
+  YOUTUBE_SCRAPE_YOUTUBE_DATA_API_KEY: string
 }>
 
 type ElectronStoreLike = { get(key: string, defaultValue?: unknown): unknown }
@@ -96,6 +98,7 @@ export function youtubeScrapeSpawnEnvExtras(store: ElectronStoreLike): PythonSpa
   const provider = analyticsLlmProviderFromStore(store.get('analyticsLlmProvider', 'ollama'))
   const analyticsLlmOn = storeBool(store.get('analyticsOllamaEnabled', true), true)
   const ragOn = storeBool(store.get('analyticsRagEnabled', false), false)
+  const youtubeDataApiOn = storeBool(store.get('youtubeDataApiEnabled', false), false)
   return {
     YOUTUBE_SCRAPE_MAX_CONCURRENT_SCRAPE_JOBS: String(jc),
     YOUTUBE_SCRAPE_FFMPEG_THREADS: String(ft),
@@ -128,6 +131,8 @@ export function youtubeScrapeSpawnEnvExtras(store: ElectronStoreLike): PythonSpa
     ),
     YOUTUBE_SCRAPE_ANALYTICS_RAG_ENABLED: ragOn ? 'true' : 'false',
     YOUTUBE_SCRAPE_OLLAMA_EMBED_MODEL: storeString(store.get('ollamaEmbedModel', ''), 'nomic-embed-text'),
+    YOUTUBE_SCRAPE_YOUTUBE_DATA_API_ENABLED: youtubeDataApiOn ? 'true' : 'false',
+    YOUTUBE_SCRAPE_YOUTUBE_DATA_API_KEY: storeString(store.get('youtubeDataApiKey', ''), ''),
   }
 }
 

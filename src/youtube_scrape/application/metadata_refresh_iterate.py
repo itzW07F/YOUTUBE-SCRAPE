@@ -14,6 +14,7 @@ from youtube_scrape.application.gallery_metadata_refresh import (
     utc_now_iso_z,
 )
 from youtube_scrape.application.scrape_video import ScrapeVideoService
+from youtube_scrape.application.video_json_comment_sync import metadata_with_comment_count_from_scraped_comments
 from youtube_scrape.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -47,9 +48,13 @@ async def iterate_metadata_refresh(
             try:
                 logger.info("metadata_refresh_scrape_start output=%s url=%s", out, url)
                 envelope = await service.scrape(url)
+                data = dict(envelope.data) if isinstance(envelope.data, dict) else {}
+                meta_raw = data.get("metadata")
+                base_meta = dict(meta_raw) if isinstance(meta_raw, dict) else {}
+                meta_dict = metadata_with_comment_count_from_scraped_comments(out, base_meta)
+                data["metadata"] = meta_dict
+                envelope = envelope.model_copy(update={"data": data})
                 (out / "video.json").write_text(envelope.model_dump_json(indent=2), encoding="utf-8")
-                meta = envelope.data.get("metadata") if isinstance(envelope.data, dict) else {}
-                meta_dict: dict = meta if isinstance(meta, dict) else {}
                 vid = str(meta_dict.get("video_id") or "")
                 append_metadata_history_jsonl(
                     out,

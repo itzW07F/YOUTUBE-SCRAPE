@@ -28,8 +28,12 @@ _CHAT_SYSTEM_PROMPT = (
 )
 
 _CHAT_SYSTEM_PROMPT_RAG = (
-    "You are an assistant for ONE YouTube video scrape. You receive a metadata header plus retrieved excerpts "
-    "(transcript segments, comments, and other artifacts) selected for the user's latest question.\n"
+    "You are an assistant for ONE YouTube video scrape. The application built your context using "
+    "**embedding-based retrieval (RAG)** over a **local vector index** of this folder's scraped files "
+    "(comments, transcript slices, metadata, etc.). You see a header plus **retrieved_excerpts** chosen by "
+    "similarity to the user's latest question — that is the RAG / Vector DB pipeline (not live web browsing).\n"
+    "If the user asks whether you use RAG or a vector database, answer **yes**: your material is from that "
+    "local retrieval step, grounded only in those excerpts.\n"
     "Stay grounded only in that material — do not invent video content, unseen comments, or off-site facts.\n"
     "If information is missing, say so succinctly.\n"
     "Reply in plain language (not JSON)."
@@ -38,6 +42,11 @@ _CHAT_SYSTEM_PROMPT_RAG = (
 _PRIMING_REPLY = (
     "Understood. I will rely only on the scraped bundle provided for this conversation and will flag "
     "uncertainty where the excerpts are silent."
+)
+
+_PRIMING_REPLY_RAG = (
+    "Understood. I will answer using only the metadata header and retrieved_excerpts from this folder's "
+    "local vector RAG index, and I will flag uncertainty where those excerpts are silent."
 )
 
 
@@ -96,10 +105,12 @@ async def run_analytics_llm_chat(
     if hybrid_pack is not None:
         pack = hybrid_pack
         sys_prompt = _CHAT_SYSTEM_PROMPT_RAG
+        priming_ack = _PRIMING_REPLY_RAG
     else:
         # RAG not eligible - explain why
         pack = build_scrape_context_pack(output_dir, max_chars=max_context_chars)
         sys_prompt = _CHAT_SYSTEM_PROMPT
+        priming_ack = _PRIMING_REPLY
         
         # Add diagnostic warning about why RAG wasn't used
         if not settings.analytics_rag_enabled:
@@ -120,7 +131,7 @@ async def run_analytics_llm_chat(
 
     primed: list[dict[str, str]] = [
         {"role": "user", "content": pack.text},
-        {"role": "assistant", "content": _PRIMING_REPLY},
+        {"role": "assistant", "content": priming_ack},
     ]
     transcript = primed + visible
     scrape_chars = len(pack.text)
