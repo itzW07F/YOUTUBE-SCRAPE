@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type Store from 'electron-store'
+import { readCommentsTotalCountFromOutputDir } from './dashboard-trackers-file'
 import {
   getAllowedOutputRoots,
   isOutputDirAllowed,
@@ -22,6 +23,11 @@ export interface VideoMetaRead {
   /** From ``video.json`` metadata (watch layout / initial data). Not inferred from ``comments.json``. */
   commentCount: number | null
   folderSizeBytes: number | null
+  /**
+   * When true, this output folder may be listed in Results / Video Gallery.
+   * Skips runs that only produced markers like summary.json or an empty shell video.json.
+   */
+  eligibleForBrowseUi: boolean
 }
 
 export interface MediaFileInfo {
@@ -250,6 +256,96 @@ export function readOutputArtifact(
   }
 }
 
+function outputDirHasTranscriptBody(absOutputDir: string): boolean {
+  for (const tf of ['transcript.txt', 'transcript.vtt', 'transcript.json']) {
+    const tp = path.join(absOutputDir, tf)
+    try {
+      if (fs.existsSync(tp) && fs.statSync(tp).isFile() && fs.statSync(tp).size > 48) {
+        return true
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return false
+}
+
+function videoMetaIsUsableForBrowse(meta: VideoMetaRead): boolean {
+  return (
+    Boolean(meta.title?.trim()) ||
+    Boolean(meta.channelTitle?.trim()) ||
+    meta.viewCount != null ||
+    meta.durationSeconds != null ||
+    meta.likeCount != null ||
+    meta.dislikeCount != null ||
+    Boolean(meta.publishedAt?.trim()) ||
+    (meta.commentCount != null && meta.commentCount > 0)
+  )
+}
+
+/**
+ * Results / Video Gallery list only folders the user can actually browse (media, comments, transcript,
+ * thumbnails on disk, or non-trivial video metadata). Failed / gated scrapes that only left summary.json
+ * or an empty envelope stay on Scrape Jobs only.
+ */
+function outputDirEligibleForBrowseUi(resolvedDir: string, store: Store, meta: VideoMetaRead): boolean {
+  const abs = path.resolve(resolvedDir)
+  if (!isOutputDirAllowed(abs, store)) {
+    return false
+  }
+
+  const summaryPath = path.join(abs, 'summary.json')
+  if (fs.existsSync(summaryPath)) {
+    try {
+      const s = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as Record<string, unknown>
+      if (s.fatal_access_abort === true) {
+        return false
+      }
+      if (s.job_status === 'failed') {
+        return false
+      }
+    } catch {
+      /* ignore malformed summary */
+    }
+  }
+
+  if (listOutputDownloadMedia(abs, store).length > 0) {
+    return true
+  }
+
+  const thumbDir = path.join(abs, 'thumbnails')
+  if (fs.existsSync(thumbDir) && fs.statSync(thumbDir).isDirectory()) {
+    try {
+      if (fs.readdirSync(thumbDir).some((f) => /\.(jpe?g|png|webp|gif)$/i.test(f))) {
+        return true
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (outputDirHasTranscriptBody(abs)) {
+    return true
+  }
+
+  if (readCommentsTotalCountFromOutputDir(abs) > 0) {
+    return true
+  }
+  try {
+    const cp = path.join(abs, 'comments.json')
+    if (fs.existsSync(cp)) {
+      const j = JSON.parse(fs.readFileSync(cp, 'utf8')) as { data?: { comments?: unknown[] } }
+      if (Array.isArray(j.data?.comments) && j.data.comments.length > 0) {
+        return true
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+
+  return videoMetaIsUsableForBrowse(meta)
+}
+
 export function readOutputVideoMeta(outputDir: string, store: Store): VideoMetaRead | null {
   if (!isOutputDirAllowed(outputDir, store)) {
     return null
@@ -268,6 +364,7 @@ export function readOutputVideoMeta(outputDir: string, store: Store): VideoMetaR
     dislikeCount: null,
     commentCount: null,
     folderSizeBytes: null,
+    eligibleForBrowseUi: false,
   }
   const videoJson = path.join(outputDir, 'video.json')
   if (fs.existsSync(videoJson)) {
@@ -359,6 +456,7 @@ export function readOutputVideoMeta(outputDir: string, store: Store): VideoMetaR
   } catch {
     out.folderSizeBytes = null
   }
+  out.eligibleForBrowseUi = outputDirEligibleForBrowseUi(outputDir, store, out)
   return out
 }
 
@@ -539,5 +637,8 @@ export function discoverScrapeOutputs(store: Store): Array<{
     }
     scanForVideoJsonDirs(path.resolve(root), 0, seen, results)
   }
-  return results
+  return results.filter((r) => {
+    const meta = readOutputVideoMeta(r.outputDir, store)
+    return meta !== null && meta.eligibleForBrowseUi
+  })
 }

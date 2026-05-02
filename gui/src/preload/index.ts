@@ -60,6 +60,46 @@ const api = {
   deleteOutputScrapeDir: (outputDir: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('output:deleteScrapeDir', outputDir),
 
+  analyticsNotesList: (
+    outputDir: string
+  ): Promise<
+    | { ok: true; files: Array<{ id: string; displayName: string }> }
+    | { ok: false; error: string }
+  > => ipcRenderer.invoke('analyticsNotes:list', outputDir),
+  analyticsNotesRead: (
+    outputDir: string,
+    fileId: string
+  ): Promise<{ ok: true; content: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke('analyticsNotes:read', outputDir, fileId),
+  analyticsNotesWrite: (
+    outputDir: string,
+    fileId: string,
+    content: string
+  ): Promise<{ ok: true } | { ok: false; error: string }> =>
+    ipcRenderer.invoke('analyticsNotes:write', outputDir, fileId, content),
+  analyticsNotesCreate: (
+    outputDir: string,
+    displayName?: string
+  ): Promise<
+    | { ok: true; file: { id: string; displayName: string } }
+    | { ok: false; error: string }
+  > => ipcRenderer.invoke('analyticsNotes:create', outputDir, displayName),
+  analyticsNotesDelete: (
+    outputDir: string,
+    fileId: string
+  ): Promise<
+    | { ok: true; files: Array<{ id: string; displayName: string }> }
+    | { ok: false; error: string }
+  > => ipcRenderer.invoke('analyticsNotes:delete', outputDir, fileId),
+  analyticsNotesRename: (
+    outputDir: string,
+    fileId: string,
+    displayName: string
+  ): Promise<
+    | { ok: true; file: { id: string; displayName: string } }
+    | { ok: false; error: string }
+  > => ipcRenderer.invoke('analyticsNotes:rename', outputDir, fileId, displayName),
+
   // Window controls
   minimizeWindow: (): Promise<void> =>
     ipcRenderer.invoke('window:minimize'),

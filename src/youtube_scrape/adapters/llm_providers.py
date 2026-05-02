@@ -7,10 +7,12 @@ from typing import Any, Literal, Protocol, runtime_checkable
 import logging
 
 import httpx
+from youtube_scrape.adapters.llm_chat_types import LlmChatResult
 from youtube_scrape.adapters.llm_errors import LlmTransportError
+from youtube_scrape.adapters.llm_usage_extract import anthropic_usage_counts, gemini_usage_counts, openai_compat_usage_counts
 from youtube_scrape.adapters.ollama_client import (
     ensure_ollama_ready,
-    ollama_chat_message,
+    ollama_chat_messages,
     ollama_list_model_names,
 )
 from youtube_scrape.settings import AnalyticsLlmProvider, Settings
@@ -49,6 +51,16 @@ class AnalyticsLlmBackend(Protocol):
         log_context: str,
     ) -> str: ...
 
+    async def chat_messages(
+        self,
+        *,
+        system: str | None,
+        messages: list[dict[str, str]],
+        json_format: bool,
+        timeout_s: float,
+        log_context: str,
+    ) -> LlmChatResult: ...
+
     async def probe(self, *, timeout_s: float = 12.0) -> tuple[bool, str, list[str] | None]: ...
 
 
@@ -72,13 +84,34 @@ class OllamaAnalyticsBackend:
         timeout_s: float,
         log_context: str,
     ) -> str:
-        return await ollama_chat_message(
+        result = await self.chat_messages(
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            json_format=json_format,
+            timeout_s=timeout_s,
+            log_context=log_context,
+        )
+        return result.content
+
+    async def chat_messages(
+        self,
+        *,
+        system: str | None,
+        messages: list[dict[str, str]],
+        json_format: bool,
+        timeout_s: float,
+        log_context: str,
+    ) -> LlmChatResult:
+        ollama_msgs: list[dict[str, str]] = []
+        if system and system.strip():
+            ollama_msgs.append({"role": "system", "content": system.strip()})
+        ollama_msgs.extend(messages)
+        return await ollama_chat_messages(
             base_url=self._s.ollama_base_url,
             model=self._s.ollama_model,
-            user_content=user,
-            system_content=system,
-            timeout_s=timeout_s,
+            messages=ollama_msgs,
             json_format=json_format,
+            timeout_s=timeout_s,
             log_context=log_context,
         )
 
@@ -107,15 +140,33 @@ class OpenAiCompatibleBackend:
         timeout_s: float,
         log_context: str,
     ) -> str:
+        result = await self.chat_messages(
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            json_format=json_format,
+            timeout_s=timeout_s,
+            log_context=log_context,
+        )
+        return result.content
+
+    async def chat_messages(
+        self,
+        *,
+        system: str | None,
+        messages: list[dict[str, str]],
+        json_format: bool,
+        timeout_s: float,
+        log_context: str,
+    ) -> LlmChatResult:
         base = self._s.openai_compatible_base_url.rstrip("/")
         url = _join_url(base, "chat/completions")
-        messages: list[dict[str, str]] = []
+        api_messages: list[dict[str, str]] = []
         if system and system.strip():
-            messages.append({"role": "system", "content": system.strip()})
-        messages.append({"role": "user", "content": user})
+            api_messages.append({"role": "system", "content": system.strip()})
+        api_messages.extend(messages)
         payload: dict[str, Any] = {
             "model": self._s.openai_compatible_model,
-            "messages": messages,
+            "messages": api_messages,
         }
         if json_format:
             payload["response_format"] = {"type": "json_object"}
@@ -138,7 +189,9 @@ class OpenAiCompatibleBackend:
                 body = resp.json()
             except ValueError as exc:
                 raise LlmTransportError("OpenAI-compatible response was not JSON") from exc
-        return _openai_extract_assistant_text(body)
+        text = _openai_extract_assistant_text(body)
+        pt, ct, tt = openai_compat_usage_counts(body)
+        return LlmChatResult(content=text, prompt_tokens=pt, completion_tokens=ct, total_tokens=tt)
 
     async def probe(self, *, timeout_s: float = 12.0) -> tuple[bool, str, list[str] | None]:
         base = self._s.openai_compatible_base_url.rstrip("/")
@@ -223,7 +276,25 @@ class AnthropicBackend:
         timeout_s: float,
         log_context: str,
     ) -> str:
-        _ = json_format  # prompt already requests JSON; avoid extra beta flags
+        result = await self.chat_messages(
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            json_format=json_format,
+            timeout_s=timeout_s,
+            log_context=log_context,
+        )
+        return result.content
+
+    async def chat_messages(
+        self,
+        *,
+        system: str | None,
+        messages: list[dict[str, str]],
+        json_format: bool,
+        timeout_s: float,
+        log_context: str,
+    ) -> LlmChatResult:
+        _ = json_format, log_context
         base = self._s.anthropic_base_url.rstrip("/")
         url = _join_url(base, "v1/messages")
         headers = {
@@ -231,10 +302,13 @@ class AnthropicBackend:
             "x-api-key": self._s.anthropic_api_key.strip(),
             "anthropic-version": "2023-06-01",
         }
+        anth_msgs: list[dict[str, str]] = [{"role": m["role"], "content": m["content"]} for m in messages]
+        if anth_msgs and anth_msgs[0]["role"] != "user":
+            anth_msgs.insert(0, {"role": "user", "content": "(Begin.)"})
         payload: dict[str, Any] = {
             "model": self._s.anthropic_model,
             "max_tokens": 8192,
-            "messages": [{"role": "user", "content": user}],
+            "messages": anth_msgs,
         }
         if system and system.strip():
             payload["system"] = system.strip()
@@ -247,7 +321,9 @@ class AnthropicBackend:
             body = resp.json()
         except ValueError as exc:
             raise LlmTransportError("Anthropic response was not JSON") from exc
-        return _anthropic_extract_text(body)
+        text_a = _anthropic_extract_text(body)
+        pt, ct, tt = anthropic_usage_counts(body)
+        return LlmChatResult(content=text_a, prompt_tokens=pt, completion_tokens=ct, total_tokens=tt)
 
     async def probe(self, *, timeout_s: float = 12.0) -> tuple[bool, str, list[str] | None]:
         if not self._s.anthropic_api_key.strip():
@@ -334,11 +410,31 @@ class GeminiBackend:
         timeout_s: float,
         log_context: str,
     ) -> str:
+        result = await self.chat_messages(
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            json_format=json_format,
+            timeout_s=timeout_s,
+            log_context=log_context,
+        )
+        return result.content
+
+    async def chat_messages(
+        self,
+        *,
+        system: str | None,
+        messages: list[dict[str, str]],
+        json_format: bool,
+        timeout_s: float,
+        log_context: str,
+    ) -> LlmChatResult:
         _ = log_context
         url = self._endpoint("generateContent")
-        body: dict[str, Any] = {
-            "contents": [{"role": "user", "parts": [{"text": user}]}],
-        }
+        contents: list[dict[str, Any]] = []
+        for m in messages:
+            r = "user" if m["role"] == "user" else "model"
+            contents.append({"role": r, "parts": [{"text": m["content"]}]})
+        body: dict[str, Any] = {"contents": contents}
         if system and system.strip():
             body["systemInstruction"] = {"parts": [{"text": system.strip()}]}
         if json_format:
@@ -352,7 +448,9 @@ class GeminiBackend:
             parsed = resp.json()
         except ValueError as exc:
             raise LlmTransportError("Gemini response was not JSON") from exc
-        return _gemini_extract_text(parsed)
+        gem_text = _gemini_extract_text(parsed)
+        pt, ct, tt = gemini_usage_counts(parsed)
+        return LlmChatResult(content=gem_text, prompt_tokens=pt, completion_tokens=ct, total_tokens=tt)
 
     async def probe(self, *, timeout_s: float = 12.0) -> tuple[bool, str, list[str] | None]:
         if not self._s.google_gemini_api_key.strip():

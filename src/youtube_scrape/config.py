@@ -74,7 +74,11 @@ class CommentsConfig(BaseModel):
         description="Follow continuations until safety_ceiling (recommended; ignores max_comments).",
     )
     include_replies: bool = Field(default=True, description="Include reply comments.")
-    max_replies_per_thread: int | None = Field(default=3, ge=0, description="Max replies per thread (null = unlimited).")
+    max_replies_per_thread: int | None = Field(
+        default=None,
+        ge=0,
+        description="Max replies per thread (null = unlimited).",
+    )
     safety_ceiling: int = Field(default=50000, ge=1, description="Hard cap to prevent runaway scraping.")
 
     @field_validator("max_comments")

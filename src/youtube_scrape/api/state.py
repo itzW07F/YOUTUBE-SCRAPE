@@ -5,7 +5,7 @@ without causing circular imports.
 """
 
 from typing import Dict, Any
-from api.connection_manager import ConnectionManager
+from .connection_manager import ConnectionManager
 
 # In-memory job store (in production, use Redis or similar)
 jobs: Dict[str, Dict[str, Any]] = {}

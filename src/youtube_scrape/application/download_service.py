@@ -11,6 +11,7 @@ fundamental limitations (~22s clips, UMP corruption, 403 errors).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Literal
@@ -90,7 +91,8 @@ class DownloadService:
                 },
             )
 
-            result = self._yt_dlp.download(
+            result = await asyncio.to_thread(
+                self._yt_dlp.download,
                 url,
                 output_path,
                 stream_kind=stream_kind,

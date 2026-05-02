@@ -15,7 +15,7 @@ import {
   Check,
   ListOrdered,
 } from 'lucide-react'
-import { useScrapeStore } from '../stores/scrapeStore'
+import { useScrapeStore, buildLaunchCaptionForJobStart, type ScrapeQuickPreset } from '../stores/scrapeStore'
 import { useAppStore } from '../stores/appStore'
 import toast from 'react-hot-toast'
 
@@ -81,6 +81,7 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
     addJob,
     setActiveJob,
     setPendingAutoExpandJobId,
+    setPendingDashboardQuickPreset,
   } = useScrapeStore()
   const { serverUrl, isServerRunning } = useAppStore()
 
@@ -141,6 +142,8 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
     }
 
     setIsSubmitting(true)
+    const batchDashPreset = useScrapeStore.getState().pendingDashboardQuickPreset
+    const isMultiBatch = unique.length > 1
     try {
       let ok = 0
       let fail = 0
@@ -149,6 +152,8 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
         try {
           await startScrapeForUrl(normalized, {
             quiet: true,
+            dashboardQuickPreset: batchDashPreset,
+            isBatch: isMultiBatch,
           })
           ok++
         } catch (error) {
@@ -177,11 +182,20 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
       setBatchText('')
       onNavigate('jobs')
     } finally {
+      setPendingDashboardQuickPreset(null)
       setIsSubmitting(false)
     }
   }
 
-  const startScrapeForUrl = async (normalized: string, options?: { quiet?: boolean }) => {
+  const startScrapeForUrl = async (
+    normalized: string,
+    options?: {
+      quiet?: boolean
+      /** When set for batch runs: same preset for every row; store pending is not read. */
+      dashboardQuickPreset?: ScrapeQuickPreset | null
+      isBatch?: boolean
+    }
+  ) => {
     if (!serverUrl) {
       throw new Error('API server is not running')
     }
@@ -197,6 +211,7 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
         include_thumbnails: scrapeOptions.includeThumbnails,
         include_download: scrapeOptions.includeDownload,
         max_comments: scrapeOptions.maxComments,
+        max_replies_per_thread: scrapeOptions.maxRepliesPerThread,
         transcript_format: scrapeOptions.transcriptFormat,
         video_quality: scrapeOptions.videoQuality,
       }),
@@ -216,6 +231,19 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
 
     const operations = selectedOperations(scrapeOptions)
     const isFull = isAllScrapeTargetsOn(scrapeOptions)
+    const isBatch = options?.isBatch ?? false
+    const store = useScrapeStore.getState()
+    const presetFromCaller = options?.dashboardQuickPreset
+    const dashboardQuickPreset =
+      presetFromCaller !== undefined ? presetFromCaller : store.pendingDashboardQuickPreset
+    const launchCaption = buildLaunchCaptionForJobStart({
+      dashboardQuickPreset,
+      isBatch,
+      operations,
+    })
+    if (presetFromCaller === undefined && !isBatch) {
+      setPendingDashboardQuickPreset(null)
+    }
 
     addJob({
       id: jobId,
@@ -225,6 +253,7 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
       type: operations.length === 1 ? operations[0] : 'all',
       operations,
       outputDir,
+      launchCaption,
       startedAt: new Date().toISOString(),
     })
 
@@ -445,31 +474,10 @@ const ScrapeView: React.FC<ScrapeViewProps> = ({ onNavigate }) => {
                 className="mt-4 p-4 rounded-xl bg-white/5 border border-glass-border space-y-4"
               >
                 {scrapeOptions.includeComments && (
-                  <div>
-                    <label className="block text-sm text-space-300 mb-2">
-                      Max comments
-                    </label>
-                    <p className="text-xs text-space-500 mb-2">
-                      Use <span className="text-space-400">0</span> for all comments (up to the API safety limit). Set a
-                      positive number to cap the count.
-                    </p>
-                    <input
-                      type="number"
-                      value={scrapeOptions.maxComments}
-                      onChange={(e) => {
-                        const raw = e.target.value
-                        const v = parseInt(raw, 10)
-                        const next =
-                          raw.trim() === '' || !Number.isFinite(v)
-                            ? 0
-                            : Math.min(10000, Math.max(0, v))
-                        updateScrapeOptions({ maxComments: next })
-                      }}
-                      min={0}
-                      max={10000}
-                      className="futuristic-input w-32"
-                    />
-                  </div>
+                  <p className="text-sm text-space-400">
+                    Comment volume and per-thread reply limits are configured in{' '}
+                    <span className="text-neon-cyan">Settings</span> (Comment scraping).
+                  </p>
                 )}
 
                 {scrapeOptions.includeTranscript && (

@@ -918,7 +918,13 @@ class CamoufoxBrowserSession(BrowserSession):
         msg = f"Failed to open watch page (sniffer) after retries: {watch_url}"
         raise NavigationError(msg, details=str(last_error))
 
-    async def fetch_text_in_watch_context(self, watch_url: str, resource_url: str) -> str:
+    async def fetch_text_in_watch_context(
+        self,
+        watch_url: str,
+        resource_url: str,
+        *,
+        hydrate_for_comments: bool = False,
+    ) -> str:
         """Load the watch page then GET a URL with Playwright (inherits session cookies)."""
         try:
             async with self._camoufox() as browser:
@@ -934,7 +940,8 @@ class CamoufoxBrowserSession(BrowserSession):
                         page,
                         total_budget_s=self._settings.youtube_preroll_ad_skip_budget_s,
                     )
-                    await self._post_goto_settle(page)
+                    if hydrate_for_comments:
+                        await self._post_goto_settle(page)
                     # In-page fetch: match watch origin cookies (plain APIRequest GET often returns empty timedtext).
                     js = """
                     async (url) => {
@@ -2106,11 +2113,13 @@ class CamoufoxBrowserSession(BrowserSession):
     async def extract_watch_payload(
         self,
         watch_url: str,
+        *,
+        hydrate_for_comments: bool = True,
     ) -> tuple[dict[str, Any], dict[str, Any], str]:
         last_error: Exception | None = None
         for attempt in range(self._settings.max_navigation_retries):
             try:
-                return await self._extract_once(watch_url)
+                return await self._extract_once(watch_url, hydrate_for_comments=hydrate_for_comments)
             except (NavigationError, ExtractionError, TimeoutError) as exc:
                 last_error = exc
                 log.warning(
@@ -2123,7 +2132,12 @@ class CamoufoxBrowserSession(BrowserSession):
         msg = f"Failed to load watch page after retries: {watch_url}"
         raise NavigationError(msg, details=str(last_error))
 
-    async def _extract_once(self, watch_url: str) -> tuple[dict[str, Any], dict[str, Any], str]:
+    async def _extract_once(
+        self,
+        watch_url: str,
+        *,
+        hydrate_for_comments: bool,
+    ) -> tuple[dict[str, Any], dict[str, Any], str]:
         try:
             async with self._camoufox() as browser:
                 page = await browser.new_page()
@@ -2138,8 +2152,13 @@ class CamoufoxBrowserSession(BrowserSession):
                         page,
                         total_budget_s=self._settings.youtube_preroll_ad_skip_budget_s,
                     )
-                    await self._post_goto_settle(page)
-                    dom_comment_total = await self._dom_watch_public_comment_count(page)
+                    if hydrate_for_comments:
+                        await self._post_goto_settle(page)
+                    dom_comment_total = (
+                        await self._dom_watch_public_comment_count(page)
+                        if hydrate_for_comments
+                        else None
+                    )
                     html = await page.content()
                     try:
                         initial = extract_yt_initial_data(html)

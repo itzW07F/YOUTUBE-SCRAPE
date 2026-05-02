@@ -30,6 +30,11 @@ export interface ScrapeJob {
   url: string
   /** From output video.json via IPC; optional so older persisted jobs still load. */
   videoTitle?: string
+  /**
+   * Human-readable launch line for job cards (dashboard quick action vs New Scrape vs discovered).
+   * Persisted; older jobs may omit and fall back to {@link formatJobLaunchHeading}.
+   */
+  launchCaption?: string
   status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
   progress: number
   type: 'video' | 'comments' | 'transcript' | 'thumbnails' | 'download' | 'all'
@@ -53,6 +58,53 @@ export type ScrapeQuickPreset =
   | 'download'
   | 'all'
 
+/** Dashboard Quick Actions only; mirrors button labels + “Full Scrape” for the all-target preset. */
+const QUICK_ACTION_LAUNCH_CAPTION: Record<ScrapeQuickPreset, string> = {
+  all: 'Quick Action - Full Scrape',
+  video: 'Quick Action - Scrape Video MetaData',
+  comments: 'Quick Action - Scrape Comments/Replies',
+  thumbnails: 'Quick Action - Scrape Video Thumbnails',
+  download: 'Quick Action - Scrape Video/Audio',
+  transcript: 'Quick Action - Transcript',
+}
+
+const NEW_SCRAPE_TYPE_SUFFIX: Record<ScrapeJob['type'], string> = {
+  all: 'Full Scrape',
+  video: 'Scrape Video MetaData',
+  comments: 'Scrape Comments/Replies',
+  transcript: 'Transcript',
+  thumbnails: 'Scrape Video Thumbnails',
+  download: 'Scrape Video/Audio',
+}
+
+export function formatJobLaunchHeading(job: ScrapeJob): string {
+  if (job.launchCaption) {
+    return job.launchCaption
+  }
+  if (job.id.startsWith('fs-')) {
+    return 'Discovered output'
+  }
+  return `Scrape job - ${job.type}`
+}
+
+type ScrapeLaunchOp = NonNullable<ScrapeJob['operations']>[number]
+
+export function buildLaunchCaptionForJobStart(options: {
+  dashboardQuickPreset: ScrapeQuickPreset | null
+  isBatch: boolean
+  operations: ScrapeLaunchOp[]
+}): string {
+  const { dashboardQuickPreset, isBatch, operations } = options
+  const batchSeg = isBatch ? 'Batch - ' : ''
+  if (dashboardQuickPreset != null) {
+    const base = QUICK_ACTION_LAUNCH_CAPTION[dashboardQuickPreset]
+    return isBatch ? `${base} (batch)` : base
+  }
+  const type: ScrapeJob['type'] = operations.length === 1 ? operations[0] : 'all'
+  const suffix = NEW_SCRAPE_TYPE_SUFFIX[type]
+  return `New Scrape - ${batchSeg}${suffix}`
+}
+
 type ScrapeOptionsBase = {
   includeVideo: boolean
   includeComments: boolean
@@ -60,6 +112,8 @@ type ScrapeOptionsBase = {
   includeThumbnails: boolean
   includeDownload: boolean
   maxComments: number
+  /** null = unlimited replies per top-level thread */
+  maxRepliesPerThread: number | null
   transcriptFormat: 'txt' | 'vtt' | 'json'
   videoQuality: string
 }
@@ -101,6 +155,11 @@ function scrapePresetToIncludes(
 interface ScrapeState {
   jobs: ScrapeJob[]
   activeJobId: string | null
+  /**
+   * Set when a Dashboard Quick Action applies a preset; consumed when a scrape job is queued.
+   * Not set by New Scrape UI toggles.
+   */
+  pendingDashboardQuickPreset: ScrapeQuickPreset | null
   /** Cleared after JobsView expands this job once (set when starting a scrape from New Scrape). */
   pendingAutoExpandJobId: string | null
   /**
@@ -115,6 +174,7 @@ interface ScrapeState {
     includeThumbnails: boolean
     includeDownload: boolean
     maxComments: number
+    maxRepliesPerThread: number | null
     transcriptFormat: 'txt' | 'vtt' | 'json'
     videoQuality: string
   }
@@ -130,9 +190,54 @@ interface ScrapeState {
   updateScrapeOptions: (options: Partial<ScrapeState['scrapeOptions']>) => void
   /** Sets exactly one scrape target (or all); used by dashboard Quick Actions. */
   applyScrapePreset: (preset: ScrapeQuickPreset) => void
+  /** Call from Dashboard when navigating to New Scrape after a Quick Action (drives job card heading). */
+  setPendingDashboardQuickPreset: (preset: ScrapeQuickPreset | null) => void
   /** Clears all "what to scrape" toggles (direct navigation to New Scrape). */
   resetScrapeTogglesToNone: () => void
   bumpGalleryDiskRevision: () => void
+}
+
+/** Persisted default for New Scrape / Analytics comment requests (electron-store). */
+export const SCRAPE_STORE_KEY_MAX_COMMENTS = 'scrapeMaxComments'
+export const SCRAPE_STORE_KEY_MAX_REPLIES = 'scrapeMaxRepliesPerThread'
+
+function clampScrapeMaxComments(n: unknown): number {
+  const x = typeof n === 'number' ? n : typeof n === 'string' ? Number.parseInt(n, 10) : Number.NaN
+  if (!Number.isFinite(x)) {
+    return 0
+  }
+  return Math.min(10_000, Math.max(0, Math.floor(x)))
+}
+
+function parseMaxRepliesFromStore(raw: unknown): number | null {
+  if (raw === null || raw === undefined) {
+    return null
+  }
+  const x = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number.parseInt(raw, 10) : Number.NaN
+  if (!Number.isFinite(x)) {
+    return null
+  }
+  return Math.min(100_000, Math.max(0, Math.floor(x)))
+}
+
+/** Hydrate comment/reply caps from saved GUI preferences (no-op without Electron). */
+export function hydrateScrapeCommentLimitsFromStore(): void {
+  if (typeof window === 'undefined' || !window.electronAPI) {
+    return
+  }
+  void Promise.all([
+    window.electronAPI.storeGet(SCRAPE_STORE_KEY_MAX_COMMENTS),
+    window.electronAPI.storeGet(SCRAPE_STORE_KEY_MAX_REPLIES),
+  ])
+    .then(([mc, mr]) => {
+      useScrapeStore.getState().updateScrapeOptions({
+        maxComments: clampScrapeMaxComments(mc),
+        maxRepliesPerThread: parseMaxRepliesFromStore(mr),
+      })
+    })
+    .catch(() => {
+      /* ignore */
+    })
 }
 
 export interface DiscoveredScrapeOutput {
@@ -246,6 +351,7 @@ function sanitizeJob(input: unknown): ScrapeJob | null {
         ? j.type
         : 'all',
     videoTitle: typeof j.videoTitle === 'string' ? j.videoTitle : undefined,
+    launchCaption: typeof j.launchCaption === 'string' ? j.launchCaption : undefined,
     outputDir: typeof j.outputDir === 'string' ? j.outputDir : undefined,
     operations: Array.isArray(j.operations)
       ? j.operations.filter(
@@ -303,6 +409,7 @@ export function mergeScrapeJobsOnHydration(
       status: 'completed',
       type: 'all',
       progress: 100,
+      launchCaption: 'Discovered output',
       outputDir: dir,
       startedAt: d.completedAt,
       completedAt: d.completedAt,
@@ -355,6 +462,7 @@ export function jobsForPersistence(jobs: ScrapeJob[]): ScrapeJob[] {
 export const useScrapeStore = create<ScrapeState>((set, get) => ({
   jobs: [],
   activeJobId: null,
+  pendingDashboardQuickPreset: null,
   pendingAutoExpandJobId: null,
   galleryDiskRevisionBump: 0,
   scrapeOptions: {
@@ -364,6 +472,7 @@ export const useScrapeStore = create<ScrapeState>((set, get) => ({
     includeThumbnails: false,
     includeDownload: false,
     maxComments: 0,
+    maxRepliesPerThread: null,
     transcriptFormat: 'txt',
     videoQuality: 'best',
   },
@@ -476,8 +585,13 @@ export const useScrapeStore = create<ScrapeState>((set, get) => ({
     }))
   },
 
+  setPendingDashboardQuickPreset: (preset) => {
+    set({ pendingDashboardQuickPreset: preset })
+  },
+
   resetScrapeTogglesToNone: () => {
     set((state) => ({
+      pendingDashboardQuickPreset: null,
       scrapeOptions: {
         ...state.scrapeOptions,
         includeVideo: false,

@@ -12,6 +12,7 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncGenerator, Dict, Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -24,13 +25,19 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.routes import scrape, dl as download, config, batch, metadata_refresh, analytics
 from api.state import get_job_store, get_websocket_manager
 
-# Configure logging
+# Configure logging - both stdout and file
+log_file = Path(os.environ.get("OUTPUT_DIR", "output")) / "api_server.log"
+log_file.parent.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(log_file, mode="a"),
+    ]
 )
 logger = logging.getLogger(__name__)
+logger.info(f"Logging to: {log_file}")
 
 
 @asynccontextmanager
@@ -142,13 +149,26 @@ async def progress_websocket(websocket: WebSocket, job_id: str) -> None:
     await ws.connect(websocket, job_id)
     
     try:
-        # Send initial status
+        # Snapshot so clients can reconcile after reconnect/tab churn (matches ConnectionManager.send_status shape).
         if job_id in job_store:
-            await websocket.send_json({
+            j = dict(job_store[job_id])
+            details: Dict[str, Any] = {}
+            err = j.get("error")
+            if isinstance(err, str) and err.strip():
+                details["error"] = err.strip()
+            res = j.get("result")
+            if isinstance(res, dict):
+                for key in ("chunk_count", "message", "embed_model", "embed_dim"):
+                    if key in res and res[key] is not None:
+                        details[key] = res[key]
+            payload: Dict[str, Any] = {
                 "type": "status",
                 "job_id": job_id,
-                "data": job_store[job_id]
-            })
+                "status": j.get("status", "unknown"),
+            }
+            if details:
+                payload["details"] = details
+            await websocket.send_json(payload)
         
         # Keep connection alive and handle client messages
         while True:

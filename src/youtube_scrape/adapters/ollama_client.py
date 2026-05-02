@@ -9,7 +9,9 @@ from typing import Any
 
 import httpx
 
+from youtube_scrape.adapters.llm_chat_types import LlmChatResult
 from youtube_scrape.adapters.llm_errors import LlmTransportError
+from youtube_scrape.adapters.llm_usage_extract import ollama_chat_usage_counts
 
 log = logging.getLogger(__name__)
 
@@ -302,6 +304,187 @@ async def ensure_ollama_ready(*, base_url: str, model: str, timeout_s: float = 1
     )
 
 
+def _coerce_embedding_numbers(raw: list[Any]) -> list[float]:
+    """Validate and normalize one embedding vector."""
+
+    out: list[float] = []
+    for x in raw:
+        if isinstance(x, bool):
+            raise OllamaHttpError("Ollama embedding contained boolean values")
+        if isinstance(x, int | float):
+            out.append(float(x))
+        else:
+            raise OllamaHttpError("Ollama embedding contained non-numeric values")
+    return out
+
+
+def _looks_like_ollama_model_pull_missing(detail_lower: str) -> bool:
+    """True when the error is specifically 'model not pulled' (don't waste CPU-retries).
+
+    Distinguished from GPU load failures ('model exists but failed to load').
+    """
+
+    return "pull" in detail_lower and ("not found" in detail_lower or "does not exist" in detail_lower)
+
+
+def _embedding_should_retry_cpu(*, http_status: int, detail_lower: str) -> bool:
+    """True when a CPU-only load may succeed (large chat models often saturate GPU VRAM)."""
+
+    if _looks_like_ollama_model_pull_missing(detail_lower):
+        return False
+    if http_status >= 500:
+        return True
+    return any(
+        needle in detail_lower
+        for needle in (
+            "failed to load",
+            "unable to load",
+            "could not load model",
+            "out of memory",
+            "cuda error",
+            "resource",
+            "runner process has terminated",
+            "runner process exited",
+        )
+    )
+
+
+async def _ollama_post_embedding_json(
+    *,
+    client: httpx.AsyncClient,
+    url: str,
+    payload: dict[str, Any],
+) -> tuple[int, dict[str, Any] | None, str]:
+    """POST JSON to an embedding endpoint; return ``http_status``, parsed body (if dict), ``detail_raw``."""
+
+    resp = await client.post(url, json=payload)
+    detail_raw = _ollama_error_detail(resp).strip() if resp.status_code >= 400 else ""
+    parsed: dict[str, Any] | None = None
+    try:
+        body = resp.json()
+        if isinstance(body, dict):
+            parsed = body
+            if resp.status_code >= 400 and not detail_raw.strip():
+                err = body.get("error")
+                if isinstance(err, str) and err.strip():
+                    detail_raw = err.strip()
+    except ValueError:
+        pass
+    return resp.status_code, parsed, detail_raw
+
+
+def _vector_from_embed_api_json(data: dict[str, Any]) -> list[float] | None:
+    embs = data.get("embeddings")
+    if not isinstance(embs, list) or not embs:
+        return None
+    first = embs[0]
+    if not isinstance(first, list) or not first:
+        return None
+    return _coerce_embedding_numbers(first)
+
+
+def _vector_from_legacy_embeddings_json(data: dict[str, Any]) -> list[float] | None:
+    emb = data.get("embedding")
+    if not isinstance(emb, list) or not emb:
+        return None
+    return _coerce_embedding_numbers(emb)
+
+
+async def ollama_embed_prompt(
+    *,
+    base_url: str,
+    model: str,
+    prompt: str,
+    timeout_s: float,
+    client: httpx.AsyncClient | None = None,
+) -> list[float]:
+    """Request an embedding from Ollama.
+
+    Prefers modern ``POST /api/embed`` (``input`` field). Falls back to legacy ``POST /api/embeddings``
+    (``prompt`` field) for older daemons. When the model exists but fails to load on GPU (common if a
+    large chat model is already resident), retries with ``options.num_gpu=0`` so embedding can run on CPU.
+    """
+
+    normalized = normalize_ollama_base_url(base_url)
+    root = normalized.rstrip("/")
+    url_embed = root + "/api/embed"
+    url_legacy = root + "/api/embeddings"
+    t = httpx.Timeout(timeout_s, connect=min(10.0, timeout_s))
+    own_client = client is None
+    if own_client:
+        client = httpx.AsyncClient(timeout=t)
+    assert client is not None
+
+    diag: list[str] = []
+
+    async def embed_round(url: str, *, modern: bool) -> list[float] | None:
+        """Try ``/api/embed`` or legacy ``/api/embeddings``: GPU-first, CPU retry on plausible VRAM clashes."""
+
+        for use_cpu in (False, True):
+            if modern:
+                payload: dict[str, Any] = {"model": model, "input": prompt, "truncate": True}
+            else:
+                payload = {"model": model, "prompt": prompt}
+            if use_cpu:
+                payload["options"] = {"num_gpu": 0}
+            status, data, detail_raw = await _ollama_post_embedding_json(client=client, url=url, payload=payload)
+            detail_lower = detail_raw.lower()
+
+            if status < 400 and isinstance(data, dict):
+                parsed = (
+                    _vector_from_embed_api_json(data)
+                    if modern
+                    else _vector_from_legacy_embeddings_json(data)
+                )
+                if parsed:
+                    if use_cpu:
+                        log.info(
+                            "ollama_embed_cpu_fallback_ok",
+                            extra={
+                                "endpoint": "/api/embed" if modern else "/api/embeddings",
+                                "model_requested": model,
+                            },
+                        )
+                    return parsed
+                tail = detail_raw.strip() if detail_raw else "JSON parsed but embeddings empty"
+                diag.append(f"{url} ({'CPU' if use_cpu else 'GPU'}) OK but unusable embedding: {tail[:240]}")
+            else:
+                diag.append(f"{url} ({'CPU' if use_cpu else 'GPU'}) HTTP {status}: {detail_raw[:400]}")
+
+            if use_cpu:
+                break
+            if status < 400:
+                break
+            if _embedding_should_retry_cpu(http_status=status, detail_lower=detail_lower):
+                continue
+            break
+
+        return None
+
+    try:
+        out = await embed_round(url_embed, modern=True)
+        if out:
+            return out
+        out = await embed_round(url_legacy, modern=False)
+        if out:
+            return out
+
+        merged = "; ".join(diag)
+        merged_lc = merged.lower()
+        if _looks_like_ollama_model_pull_missing(merged_lc):
+            raise OllamaHttpError(
+                f"Embedding model '{model}' not found in Ollama at {normalized}. "
+                f"Run 'ollama pull {model}' to install it."
+            )
+        raise OllamaHttpError(
+            "Could not obtain embeddings from Ollama (/api/embed and /api/embeddings failed): "
+            f"{merged[:1600]}",
+        )
+    finally:
+        if own_client:
+            await client.aclose()
+
+
 async def ollama_chat_message(
     *,
     base_url: str,
@@ -440,4 +623,133 @@ async def ollama_chat_message(
                 )
                 continue
 
-            raise OllamaHttpError(f"Ollama HTTP {resp.status_code}: {last_detail}")
+            # Provide helpful error messages for common Ollama failures
+            error_msg = f"Ollama HTTP {resp.status_code}: {last_detail}"
+            if resp.status_code == 500 and "unexpected EOF" in last_detail.lower():
+                error_msg = (
+                    f"Ollama model crashed (HTTP 500: unexpected EOF). "
+                    f"This usually means the context exceeded the model's limit. "
+                    f"Try: 1) Reduce RAG context in Settings, 2) Use a model with larger context window, "
+                    f"3) Shorten your conversation history. Error: {last_detail}"
+                )
+            elif resp.status_code == 500:
+                error_msg = (
+                    f"Ollama model error (HTTP 500): {last_detail}. "
+                    f"The model may have run out of memory or crashed. "
+                    f"Try: 1) Restart Ollama, 2) Use a smaller model, 3) Check Ollama logs."
+                )
+            raise OllamaHttpError(error_msg)
+
+
+async def ollama_chat_messages(
+    *,
+    base_url: str,
+    model: str,
+    messages: list[dict[str, str]],
+    json_format: bool,
+    timeout_s: float,
+    log_context: str | None = None,
+) -> LlmChatResult:
+    """POST ``/api/chat`` with a full message transcript (roles: system/user/assistant), non-streaming."""
+
+    root = normalize_ollama_base_url(base_url)
+    url = root.rstrip("/") + "/api/chat"
+    base_payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "stream": False,
+        "think": _think_request_field(model),
+    }
+    payloads: list[dict[str, Any]] = []
+    if json_format:
+        payloads.append({**base_payload, "format": "json"})
+    payloads.append(base_payload)
+
+    t = httpx.Timeout(timeout_s, connect=min(15.0, timeout_s))
+    ctx = log_context or "ollama_chat_multi"
+    async with httpx.AsyncClient(timeout=t) as client:
+        last_detail = ""
+        for i, payload in enumerate(payloads):
+            attempt_label = f"{i + 1}/{len(payloads)}"
+            uses_json_format = payload.get("format") == "json"
+            t0 = time.monotonic()
+            try:
+                resp = await client.post(url, json=payload)
+            except httpx.ConnectError as exc:
+                raise OllamaHttpError(
+                    f"Cannot connect to Ollama at {root.rstrip('/')}. "
+                    "Start Ollama or set YOUTUBE_SCRAPE_OLLAMA_BASE_URL."
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise OllamaHttpError(f"Ollama request failed: {exc}") from exc
+
+            elapsed_ms = round((time.monotonic() - t0) * 1000)
+
+            if resp.status_code < 400:
+                try:
+                    body = resp.json()
+                except ValueError as exc:
+                    raise OllamaHttpError("Ollama response was not JSON") from exc
+                if not isinstance(body, dict):
+                    raise OllamaHttpError("Ollama response JSON was not an object")
+
+                text, ext_meta = extract_assistant_text(body)
+                summary = _summarize_chat_response(body)
+                if text:
+                    log.info(
+                        f"{ctx}_ok",
+                        extra={
+                            "attempt": attempt_label,
+                            "json_format": uses_json_format,
+                            "http_status": resp.status_code,
+                            "elapsed_ms": elapsed_ms,
+                            "assistant_chars": len(text),
+                            **ext_meta,
+                        },
+                    )
+                    log.debug(f"{ctx}_body_summary", extra=summary)
+                    pt, ct, tt = ollama_chat_usage_counts(body)
+                    return LlmChatResult(
+                        content=text.strip(),
+                        prompt_tokens=pt,
+                        completion_tokens=ct,
+                        total_tokens=tt,
+                    )
+
+                log.error(
+                    f"{ctx}_empty_assistant_after_success",
+                    extra={
+                        "attempt": attempt_label,
+                        "json_format": uses_json_format,
+                        "elapsed_ms": elapsed_ms,
+                        **summary,
+                    },
+                )
+                raise OllamaHttpError(
+                    "Ollama returned success but no assistant text in message.content / thinking "
+                    "(see API stderr logs for message_*_keys). Check model compatibility."
+                )
+
+            last_detail = _ollama_error_detail(resp)
+            if json_format and i == 0 and resp.status_code == 400 and len(payloads) > 1:
+                log.info(
+                    "ollama_retry_chat_multi_without_json_format",
+                    extra={"detail": last_detail[:240]},
+                )
+                continue
+            # Provide helpful error messages for common Ollama failures
+            error_msg = f"Ollama HTTP {resp.status_code}: {last_detail}"
+            if resp.status_code == 500 and "unexpected EOF" in last_detail.lower():
+                error_msg = (
+                    f"Ollama model crashed (HTTP 500: unexpected EOF). "
+                    f"This usually means the context exceeded the model's limit. "
+                    f"Try: 1) Reduce RAG context in Settings, 2) Use a model with larger context window, "
+                    f"3) Shorten your conversation history. Error: {last_detail}"
+                )
+            elif resp.status_code == 500:
+                error_msg = (
+                    f"Ollama model error (HTTP 500): {last_detail}. "
+                    f"The model may have run out of memory or crashed. "
+                    f"Try: 1) Restart Ollama, 2) Use a smaller model, 3) Check Ollama logs."
+                )
+            raise OllamaHttpError(error_msg)

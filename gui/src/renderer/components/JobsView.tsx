@@ -23,9 +23,85 @@ import {
   hydrateScrapeJobsFromStore,
   parseJobWarnings,
   LogEntry,
+  formatJobLaunchHeading,
 } from '../stores/scrapeStore'
 import { useAppStore } from '../stores/appStore'
 import { jobIdUsesProgressWebSocket } from '../constants/jobPrefixes'
+import {
+  extractYoutubeVideoId,
+  fallbackYoutubeListTitle,
+  fetchYoutubeOembedDisplay,
+  outputFolderBasenameAsVideoId,
+} from '../utils/youtubeDisplayMeta'
+
+function formatJobDurationMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) {
+    return '—'
+  }
+  const sec = Math.floor(ms / 1000)
+  if (sec < 60) {
+    return `${sec}s`
+  }
+  const min = Math.floor(sec / 60)
+  const rSec = sec % 60
+  if (min < 60) {
+    return `${min}m ${String(rSec).padStart(2, '0')}s`
+  }
+  const hr = Math.floor(min / 60)
+  const rMin = min % 60
+  return `${hr}h ${String(rMin).padStart(2, '0')}m ${String(rSec).padStart(2, '0')}s`
+}
+
+const JobRuntimeLabel: React.FC<{ job: ScrapeJob; className?: string }> = ({ job, className }) => {
+  const [tick, setTick] = useState(0)
+  const isRunning = job.status === 'running'
+  useEffect(() => {
+    if (!isRunning || !job.startedAt) {
+      return undefined
+    }
+    const id = window.setInterval(() => setTick((t) => t + 1), 1000)
+    return () => window.clearInterval(id)
+  }, [isRunning, job.startedAt])
+
+  const line = useMemo(() => {
+    if (!job.startedAt) {
+      return null
+    }
+    const t0 = new Date(job.startedAt).getTime()
+    if (!Number.isFinite(t0)) {
+      return null
+    }
+    let t1: number
+    if (isRunning) {
+      t1 = Date.now()
+    } else if (job.completedAt) {
+      t1 = new Date(job.completedAt).getTime()
+    } else if (job.logs.length > 0) {
+      const last = job.logs[job.logs.length - 1]
+      t1 = last ? new Date(last.timestamp).getTime() : Date.now()
+    } else {
+      t1 = Date.now()
+    }
+    if (!Number.isFinite(t1)) {
+      return null
+    }
+    const ms = Math.max(0, t1 - t0)
+    const label = isRunning ? 'Runtime' : 'Duration'
+    return `${label} ${formatJobDurationMs(ms)}`
+  }, [job.startedAt, job.completedAt, job.logs, isRunning, tick])
+
+  if (!line) {
+    return null
+  }
+  return (
+    <span
+      className={className ?? 'text-xs text-space-500 tabular-nums'}
+      title="Wall time from job start until finish (or live if still running)"
+    >
+      {line}
+    </span>
+  )
+}
 
 const JobsView: React.FC = () => {
   const {
@@ -83,6 +159,8 @@ const JobsView: React.FC = () => {
             if (data.status === 'completed') {
               patch.completedAt = new Date().toISOString()
               patch.warnings = parseJobWarnings(details.warnings)
+            } else if (data.status === 'failed' || data.status === 'cancelled') {
+              patch.completedAt = new Date().toISOString()
             }
             updateJob(job.id, patch)
           }
@@ -146,7 +224,7 @@ const JobsView: React.FC = () => {
     try {
       const response = await fetch(`${serverUrl}/jobs/${jobId}/cancel`, { method: 'POST' })
       if (response.ok) {
-        updateJob(jobId, { status: 'cancelled' })
+        updateJob(jobId, { status: 'cancelled', completedAt: new Date().toISOString() })
       }
     } catch (error) {
       console.error('Failed to cancel job:', error)
@@ -196,6 +274,7 @@ const JobsView: React.FC = () => {
     let cancelled = false
     const timers: ReturnType<typeof setTimeout>[] = []
     const byDir = new Map<string, string[]>()
+    const urlByDir = new Map<string, string>()
     for (const job of snapshot) {
       if (!job.outputDir || job.videoTitle) {
         continue
@@ -203,10 +282,35 @@ const JobsView: React.FC = () => {
       const ids = byDir.get(job.outputDir) ?? []
       ids.push(job.id)
       byDir.set(job.outputDir, ids)
+      if (job.url && !urlByDir.has(job.outputDir)) {
+        urlByDir.set(job.outputDir, job.url)
+      }
+    }
+
+    const enrichTitle = async (
+      diskTitle: string,
+      jobUrl: string,
+      outputDir: string
+    ): Promise<string> => {
+      const t = diskTitle.trim()
+      if (t) {
+        return t
+      }
+      const vid =
+        extractYoutubeVideoId(jobUrl) || outputFolderBasenameAsVideoId(outputDir) || ''
+      if (vid) {
+        const o = await fetchYoutubeOembedDisplay(vid)
+        if (o?.title?.trim()) {
+          return o.title.trim()
+        }
+        return fallbackYoutubeListTitle(vid)
+      }
+      return fallbackYoutubeListTitle(null)
     }
 
     void Promise.all(
       [...byDir.entries()].map(async ([dir, ids]) => {
+        const jobUrl = urlByDir.get(dir) ?? ''
         const apply = (title: string | null | undefined) => {
           const t = title?.trim()
           if (!t || cancelled) {
@@ -217,16 +321,33 @@ const JobsView: React.FC = () => {
         try {
           const meta = (await window.electronAPI.readOutputVideoMeta(dir)) as {
             title: string | null
+            videoId: string | null
           } | null
-          apply(meta?.title ?? null)
-          if (!meta?.title?.trim() && !cancelled) {
+          const diskTitle = meta?.title ?? ''
+          const finalTitle = await enrichTitle(
+            diskTitle,
+            meta?.videoId ? `https://www.youtube.com/watch?v=${meta.videoId}` : jobUrl,
+            dir
+          )
+          apply(finalTitle)
+          if (!diskTitle.trim() && !cancelled) {
             timers.push(
               setTimeout(async () => {
+                if (cancelled) {
+                  return
+                }
                 try {
                   const retry = (await window.electronAPI.readOutputVideoMeta(dir)) as {
                     title: string | null
+                    videoId: string | null
                   } | null
-                  apply(retry?.title ?? null)
+                  const retryDisk = retry?.title ?? ''
+                  const next = await enrichTitle(
+                    retryDisk,
+                    retry?.videoId ? `https://www.youtube.com/watch?v=${retry.videoId}` : jobUrl,
+                    dir
+                  )
+                  apply(next)
                 } catch {
                   /* ignore */
                 }
@@ -234,7 +355,12 @@ const JobsView: React.FC = () => {
             )
           }
         } catch {
-          /* ignore */
+          if (!cancelled) {
+            const vid = extractYoutubeVideoId(jobUrl) || outputFolderBasenameAsVideoId(dir)
+            apply(
+              vid ? (await fetchYoutubeOembedDisplay(vid))?.title?.trim() || fallbackYoutubeListTitle(vid) : fallbackYoutubeListTitle(null)
+            )
+          }
         }
       })
     )
@@ -361,18 +487,29 @@ const JobCard: React.FC<JobCardProps> = ({
 
         {/* Job info */}
         <div className="flex-1 min-w-0">
-          {job.videoTitle ? (
-            <p className="text-white font-medium truncate" title={job.videoTitle}>
-              {job.videoTitle}
-            </p>
-          ) : null}
           <p
-            className={`truncate ${job.videoTitle ? 'text-sm text-space-400' : 'text-white font-medium'}`}
+            className="text-white font-medium truncate"
+            title={formatJobLaunchHeading(job)}
+          >
+            {formatJobLaunchHeading(job)}
+          </p>
+          <p
+            className="text-sm text-space-300 truncate mt-0.5"
+            title={job.videoTitle || (job.outputDir ? 'Resolving title…' : '') || job.url}
+          >
+            {job.videoTitle
+              ? job.videoTitle
+              : job.outputDir
+                ? 'Resolving title…'
+                : '—'}
+          </p>
+          <p
+            className="text-xs text-space-500 truncate mt-0.5"
             title={job.url}
           >
             {job.url}
           </p>
-          <div className="flex items-center gap-3 text-sm text-space-400">
+          <div className="flex items-center gap-3 text-sm text-space-400 mt-1">
             <span>{job.type}</span>
             <span>•</span>
             <span>{status.label}</span>
@@ -380,6 +517,8 @@ const JobCard: React.FC<JobCardProps> = ({
               <>
                 <span>•</span>
                 <span>{new Date(job.startedAt).toLocaleString()}</span>
+                <span>•</span>
+                <JobRuntimeLabel job={job} />
               </>
             )}
           </div>
@@ -398,6 +537,11 @@ const JobCard: React.FC<JobCardProps> = ({
                 style={{ width: `${Math.min(100, Math.max(0, job.progress))}%` }}
               />
             </div>
+            {job.startedAt ? (
+              <div className="mt-1 text-right">
+                <JobRuntimeLabel job={job} />
+              </div>
+            ) : null}
           </div>
         )}
 
@@ -465,6 +609,12 @@ const JobCard: React.FC<JobCardProps> = ({
                 <div className="min-w-0 flex-1">
                   <p className="mb-1 text-space-400">Output Directory</p>
                   <p className="break-all font-mono text-xs leading-relaxed text-white">{job.outputDir || 'N/A'}</p>
+                </div>
+                <div className="shrink-0 sm:w-28 sm:text-right">
+                  <p className="mb-1 text-space-400">Wall time</p>
+                  <p className="text-white tabular-nums text-sm">
+                    {job.startedAt ? <JobRuntimeLabel job={job} className="text-white tabular-nums text-sm" /> : '—'}
+                  </p>
                 </div>
                 <div className="shrink-0 sm:w-24 sm:text-right">
                   <p className="mb-1 text-space-400">Progress</p>

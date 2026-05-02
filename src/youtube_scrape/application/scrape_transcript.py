@@ -437,7 +437,10 @@ class ScrapeTranscriptService:
     ) -> ResultEnvelope:
         """Two-session path for non-Camoufox browser stubs."""
         log.info("scrape_transcript_legacy", extra={"url": watch_page_url, "language": language, "fmt": fmt})
-        player, _initial, _html = await self._browser.extract_watch_payload(watch_page_url)
+        player, _initial, _html = await self._browser.extract_watch_payload(
+            watch_page_url,
+            hydrate_for_comments=False,
+        )
         meta = parse_video_metadata(player)
         tracks = parse_caption_tracks(player)
         if not tracks:

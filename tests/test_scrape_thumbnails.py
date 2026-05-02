@@ -43,12 +43,24 @@ class _StubBrowser:
     def __init__(self, player: dict[str, Any]) -> None:
         self._player = player
 
-    async def extract_watch_payload(self, watch_url: str) -> tuple[dict[str, Any], dict[str, Any], str]:
+    async def extract_watch_payload(
+        self,
+        watch_url: str,
+        *,
+        hydrate_for_comments: bool = True,
+    ) -> tuple[dict[str, Any], dict[str, Any], str]:
         _ = watch_url
+        _ = hydrate_for_comments
         return self._player, {}, "<html></html>"
 
-    async def fetch_text_in_watch_context(self, watch_url: str, resource_url: str) -> str:
-        _ = (watch_url, resource_url)
+    async def fetch_text_in_watch_context(
+        self,
+        watch_url: str,
+        resource_url: str,
+        *,
+        hydrate_for_comments: bool = False,
+    ) -> str:
+        _ = (watch_url, resource_url, hydrate_for_comments)
         return ""
 
 

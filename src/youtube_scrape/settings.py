@@ -152,6 +152,26 @@ class Settings(BaseSettings):
         default="gemini-2.0-flash",
         description="Model id for generateContent (e.g. gemini-2.0-flash).",
     )
+    analytics_rag_enabled: bool = Field(
+        default=True,
+        description="When true and provider is ollama, /analytics/chat uses local embeddings + per-folder SQLite RAG for intelligent context selection.",
+    )
+    analytics_rag_top_k: int = Field(
+        default=12,
+        ge=1,
+        le=64,
+        description="Max excerpt chunks merged into the hybrid chat priming payload.",
+    )
+    analytics_rag_max_context_chars: int = Field(
+        default=24_000,
+        ge=4_000,
+        le=100_000,
+        description="Character cap for the hybrid RAG priming text (header + retrieved excerpts). Lower values prevent Ollama model crashes.",
+    )
+    ollama_embed_model: str = Field(
+        default="nomic-embed-text",
+        description="Ollama embedding model for analytics RAG (POST /api/embed, legacy /api/embeddings); pull separately from chat model.",
+    )
 
     @field_validator("log_level")
     @classmethod

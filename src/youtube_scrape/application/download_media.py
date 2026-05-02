@@ -997,7 +997,10 @@ class DownloadMediaService:
                 if nd is not None:
                     _nd_record_sniffer_and_spool(nd, output_path, sniff)
         else:
-            player, _initial, _html = await self._browser.extract_watch_payload(url)
+            player, _initial, _html = await self._browser.extract_watch_payload(
+                url,
+                hydrate_for_comments=False,
+            )
             if derive_output_title_under_dir is not None:
                 output_path = _output_path_from_watch_title(
                     derive_output_title_under_dir,

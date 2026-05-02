@@ -21,6 +21,7 @@ Paths are relative to the repo root `.cursor/rules/`.
 | **ARCHITECTURE-&- DESIGN.mdc** | Structure, boundaries, SOLID/Clean Architecture, composition, resilience, observability. |
 | **INITIAL-CODEBASE.mdc** | New modules, scaffolding, layout (`src/` / `tests/` / `config/`), deps, env templates, automation hooks. |
 | **DOCUMENTATION-RULES.mdc** | ADRs, README expectations, inline “why” comments, public API docs. |
+| **AGENT-BEHAVIOR.mdc** | Handling task flow, using terminal/browser tools, verifying fixes via logs, and proactive debugging
 
 Ignore other files in `.cursor/rules/` until you adopt them; do not invent rules that are not listed.
 

@@ -364,6 +364,59 @@ async def test_probe_analytics_llm_ollama_ok() -> None:
     assert out["provider"] == "ollama"
 
 
+def _import_analytics_routes_standalone():  # noqa: ANN202
+    """Load analytics routes without importing `youtube_scrape.api.routes` package ``__init__`` (expects ``api.*``)."""
+
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    from youtube_scrape.domain.analytics_models import GuiAnalyticsLlmOverlay
+
+    pkg_root = Path(__file__).resolve().parents[1] / "src" / "youtube_scrape"
+    pre = str(pkg_root.resolve())
+    if pre not in sys.path:
+        sys.path.insert(0, pre)
+
+    mod_path = pkg_root / "api" / "routes" / "analytics.py"
+    spec = importlib.util.spec_from_file_location("_analytics_routes_under_test", mod_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Cannot load analytics route module for tests")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.LlmProbeRequestBody.model_rebuild(_types_namespace={"GuiAnalyticsLlmOverlay": GuiAnalyticsLlmOverlay})
+    return mod
+
+
+@pytest.mark.asyncio
+async def test_analytics_ollama_list_models_route_ok() -> None:
+    mod = _import_analytics_routes_standalone()
+
+    with patch.object(
+        mod,
+        "ollama_list_model_names",
+        new_callable=AsyncMock,
+        return_value=["alpha:latest", "beta"],
+    ) as m:
+        out = await mod.analytics_ollama_list_models(mod.LlmProbeRequestBody(gui_llm_overlay=None))
+    m.assert_awaited_once()
+    assert out.models == ["alpha:latest", "beta"]
+    assert out.base_url.startswith("http://")
+
+
+@pytest.mark.asyncio
+async def test_analytics_ollama_list_models_route_wrong_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("YOUTUBE_SCRAPE_ANALYTICS_LLM_PROVIDER", "anthropic")
+
+    from fastapi import HTTPException
+
+    mod = _import_analytics_routes_standalone()
+
+    with pytest.raises(HTTPException) as ei:
+        await mod.analytics_ollama_list_models(mod.LlmProbeRequestBody(gui_llm_overlay=None))
+    assert ei.value.status_code == 400
+
+
 @pytest.mark.asyncio
 async def test_probe_analytics_llm_openai_compatible_patched(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("YOUTUBE_SCRAPE_ANALYTICS_LLM_PROVIDER", "openai_compatible")

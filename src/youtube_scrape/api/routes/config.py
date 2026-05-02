@@ -61,6 +61,7 @@ DEFAULT_PRESETS: List[Preset] = [
             "include_thumbnails": True,
             "include_download": False,
             "max_comments": 0,
+            "max_replies_per_thread": None,
         }
     ),
     Preset(

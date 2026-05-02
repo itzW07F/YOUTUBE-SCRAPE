@@ -11,6 +11,7 @@ import { GalleryFloatingPlayer } from './components/GalleryFloatingPlayer'
 import SettingsView from './components/SettingsView'
 import DebugView from './components/DebugView'
 import AnalyticsView from './components/AnalyticsView'
+import VectorDbView from './components/VectorDbView'
 import Header from './components/Header'
 import ServerStatusBar from './components/ServerStatusBar'
 import {
@@ -21,6 +22,7 @@ import {
   hydrateUiFontSizeFromStore,
 } from './stores/appStore'
 import {
+  hydrateScrapeCommentLimitsFromStore,
   hydrateScrapeJobsFromStore,
   useScrapeStore,
   jobsForPersistence,
@@ -30,7 +32,7 @@ import {
 import { useDashboardTrackerStore } from './stores/dashboardTrackerStore'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 
-type View = 'dashboard' | 'scrape' | 'jobs' | 'results' | 'gallery' | 'analytics' | 'settings' | 'debug'
+type View = 'dashboard' | 'scrape' | 'jobs' | 'results' | 'gallery' | 'analytics' | 'vectordb' | 'settings' | 'debug'
 
 type NavigateOptions = { preserveScrapeOptions?: boolean }
 
@@ -61,6 +63,7 @@ const App: React.FC = () => {
     hydrateThemeFromStore()
     hydrateUiFontSizeFromStore()
     hydrateDownloadSpawnSettingsFromStore()
+    hydrateScrapeCommentLimitsFromStore()
     hydrateScrapeJobsFromStore()
     void useDashboardTrackerStore.getState().hydrate()
   }, [])
@@ -128,6 +131,8 @@ const App: React.FC = () => {
         return <VideoGalleryView onNavigateToJobs={() => navigate('jobs')} />
       case 'analytics':
         return <AnalyticsView onNavigateToGallery={() => navigate('gallery')} />
+      case 'vectordb':
+        return <VectorDbView />
       case 'settings':
         return <SettingsView />
       case 'debug':

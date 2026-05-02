@@ -10,6 +10,7 @@ import {
   Terminal,
   Youtube,
   BarChart3,
+  Database,
 } from 'lucide-react'
 import { useScrapeStore } from '../stores/scrapeStore'
 
@@ -20,6 +21,7 @@ type SidebarViewId =
   | 'results'
   | 'gallery'
   | 'analytics'
+  | 'vectordb'
   | 'settings'
   | 'debug'
 
@@ -35,6 +37,7 @@ const navItems: Array<{ id: SidebarViewId; label: string; icon: typeof LayoutDas
   { id: 'results', label: 'Results', icon: FolderOpen },
   { id: 'gallery', label: 'Video Gallery', icon: Clapperboard },
   { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+  { id: 'vectordb', label: 'Vector DB', icon: Database },
   { id: 'settings', label: 'Settings', icon: Settings },
   { id: 'debug', label: 'Debug', icon: Terminal },
 ]

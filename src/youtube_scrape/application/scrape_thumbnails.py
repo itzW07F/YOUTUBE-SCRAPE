@@ -56,7 +56,10 @@ class ScrapeThumbnailsService:
         """Download up to ``max_variants`` distinct thumbnail URLs (default: all from metadata)."""
         url = watch_url(url_or_id)
         log.info("scrape_thumbnails_start", extra={"url": url, "out_dir": str(out_dir)})
-        player, _initial, _html = await self._browser.extract_watch_payload(url)
+        player, _initial, _html = await self._browser.extract_watch_payload(
+            url,
+            hydrate_for_comments=False,
+        )
         meta = parse_video_metadata(player)
         if not meta.thumbnails:
             msg = "No thumbnail URLs in player response"

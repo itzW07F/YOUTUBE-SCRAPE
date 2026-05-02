@@ -22,6 +22,9 @@ import { extractFastApiErrorDetail } from '../utils/fastApiErrorDetail'
 import type { AnalyticsSnapshot, OllamaReportPayload } from '../types/analyticsShared'
 import { useAnalyticsStore } from '../stores/analyticsStore'
 import { ANALYTICS_METADATA_JOB_PREFIX } from '../constants/jobPrefixes'
+import { normalizeAnalyticsOutputDirKey } from '../utils/analyticsPathUtils'
+import { AnalyticsUserNotesPanel } from './AnalyticsUserNotesPanel'
+import { AnalyticsChatPanel } from './AnalyticsChatPanel'
 
 async function augmentAnalyticsHttpError(serverUrl: string, res: Response, bodyText: string, routePath: string): Promise<string> {
   let msg = bodyText.trim() || `HTTP ${res.status}`
@@ -43,10 +46,6 @@ async function augmentAnalyticsHttpError(serverUrl: string, res: Response, bodyT
 
 const JOB_POLL_INTERVAL_MS = 2000
 const JOB_POLL_TIMEOUT_MS = 45 * 60 * 1000
-
-function normalizeOutputDirKey(dir: string): string {
-  return dir.replace(/[\\/]+$/, '').replace(/\\/g, '/')
-}
 
 function formatMetadataHistoryLabel(capturedAt: string): string {
   const ms = Date.parse(capturedAt)
@@ -115,7 +114,24 @@ function resolveYoutubeWatchUrl(result: VideoResult | null): string | null {
   return null
 }
 
-async function pollJobUntilTerminal(serverUrl: string, jobId: string): Promise<{ ok: boolean; error?: string }> {
+type JobStatusPayload = {
+  status?: string
+  error?: string
+  result?: { operations_failed?: string[] }
+  warnings?: Array<{ operation: string; error: string }>
+}
+
+/**
+ * Poll until job is terminal. When the API marks a job ``completed``, it may still list failed steps in
+ * ``result.operations_failed`` (e.g. comments scrape threw while other ops ran). Treat those as failure
+ * when ``requiredOperations`` is set.
+ */
+async function pollJobUntilTerminal(
+  serverUrl: string,
+  jobId: string,
+  options?: { requiredOperations?: string[] }
+): Promise<{ ok: boolean; error?: string }> {
+  const required = options?.requiredOperations ?? []
   const deadline = Date.now() + JOB_POLL_TIMEOUT_MS
   while (Date.now() < deadline) {
     const res = await fetch(joinServerUrl(serverUrl, `/jobs/${jobId}`))
@@ -124,9 +140,23 @@ async function pollJobUntilTerminal(serverUrl: string, jobId: string): Promise<{
       const detail = extractFastApiErrorDetail(text)
       return { ok: false, error: detail ?? `HTTP ${res.status}` }
     }
-    const job = (await res.json()) as { status?: string; error?: string }
+    const job = (await res.json()) as JobStatusPayload
     const st = job.status
     if (st === 'completed') {
+      if (required.length > 0) {
+        const failed = job.result?.operations_failed ?? []
+        const bad = required.filter((op) => failed.includes(op))
+        if (bad.length > 0) {
+          const hints = job.warnings ?? []
+          const msg = bad
+            .map((op) => {
+              const w = hints.find((h) => h.operation === op)
+              return w ? `${op}: ${w.error}` : `${op} failed`
+            })
+            .join('; ')
+          return { ok: false, error: msg || 'Required scrape step failed (see Scrape Jobs logs).' }
+        }
+      }
       return { ok: true }
     }
     if (st === 'failed') {
@@ -294,6 +324,7 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
   const galleryDiskRevisionBump = useScrapeStore((s) => s.galleryDiskRevisionBump)
   const bumpGalleryDiskRevision = useScrapeStore((s) => s.bumpGalleryDiskRevision)
   const maxComments = useScrapeStore((s) => s.scrapeOptions.maxComments)
+  const maxRepliesPerThread = useScrapeStore((s) => s.scrapeOptions.maxRepliesPerThread)
   const results = useVideoResults(jobs, galleryDiskRevisionBump)
   const serverUrl = useAppStore((s) => s.serverUrl)
   const isServerRunning = useAppStore((s) => s.isServerRunning)
@@ -313,6 +344,7 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
 
   const [llmLoading, setLlmLoading] = useState(false)
 
+
   const [metaRefreshing, setMetaRefreshing] = useState(false)
   const [commentsRefreshing, setCommentsRefreshing] = useState(false)
   const [allRefreshing, setAllRefreshing] = useState(false)
@@ -324,18 +356,26 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
     [results]
   )
 
-  useEffect(() => {
-    if (!selectedDir && sortedResults.length > 0) {
-      setSelectedOutputDir(sortedResults[0].outputDir, 'auto')
+  /** When jobs touching this folder complete/fail, re-run snapshot (covers Scrape tab, websocket). */
+  const jobsDiskEcho = useMemo(() => {
+    if (!selectedDir) {
+      return ''
     }
-  }, [selectedDir, sortedResults, setSelectedOutputDir])
+    const key = normalizeAnalyticsOutputDirKey(selectedDir)
+    return jobs
+      .filter((j) => j.outputDir && normalizeAnalyticsOutputDirKey(j.outputDir) === key)
+      .map((j) => `${j.id}:${j.status}:${j.completedAt ?? ''}:${j.progress}`)
+      .join('|')
+  }, [jobs, selectedDir])
 
   const fetchSnapshot = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = Boolean(options?.silent)
     if (!serverUrl || !selectedDir) {
-      toast.error('Pick a folder and ensure the API server is running.')
+      if (!silent) {
+        toast.error('Pick a folder and ensure the API server is running.')
+      }
       return
     }
-    const silent = Boolean(options?.silent)
     if (!silent) {
       setIsFetchingSnapshot(true)
     }
@@ -358,13 +398,23 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setLoadError(msg)
-      toast.error(silent ? msg : 'Could not load analytics')
+      if (!silent) {
+        toast.error('Could not load analytics')
+      }
     } finally {
       if (!silent) {
         setIsFetchingSnapshot(false)
       }
     }
   }, [serverUrl, selectedDir, setIsFetchingSnapshot, setLoadError, setSnapshot])
+
+  /** Load snapshot when folder or API availability changes, and after disk bumps (metadata/comments refresh). */
+  useEffect(() => {
+    if (!selectedDir || !serverUrl || !isServerRunning) {
+      return
+    }
+    void fetchSnapshot({ silent: true })
+  }, [selectedDir, serverUrl, isServerRunning, galleryDiskRevisionBump, jobsDiskEcho, fetchSnapshot])
 
   const fetchLlm = useCallback(
     async (forceRefresh: boolean, options?: { silent?: boolean }) => {
@@ -412,21 +462,66 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
     [serverUrl, selectedDir]
   )
 
-  /** After analytics snapshot loads, try cache (or generate) without toasts; manual buttons still available. */
+  /** Track which folders have checked for cached macro brief to prevent duplicate checks */
+  const [autoCheckedDirs, setAutoCheckedDirs] = useState<Set<string>>(new Set())
+
+  /** After analytics snapshot loads, check for cached brief and only auto-load if cache exists.
+   * Never auto-generate a new brief - user must click the button for that. */
   useEffect(() => {
     if (!snapshot || !serverUrl || !selectedDir || !isServerRunning) {
       return
     }
-    const dirKey = normalizeOutputDirKey(selectedDir)
-    if (normalizeOutputDirKey(snapshot.output_dir) !== dirKey) {
+    const dirKey = normalizeAnalyticsOutputDirKey(selectedDir)
+    if (normalizeAnalyticsOutputDirKey(snapshot.output_dir) !== dirKey) {
       return
     }
-    void fetchLlm(false, { silent: true })
-  }, [snapshot, serverUrl, selectedDir, isServerRunning, fetchLlm])
+    // Skip if already checked for this folder
+    if (autoCheckedDirs.has(dirKey)) {
+      console.log('[AnalyticsView] Skipping auto macro brief check - already checked for:', dirKey)
+      return
+    }
+
+    const checkAndLoadCachedBrief = async (): Promise<void> => {
+      console.log('[AnalyticsView] Checking for cached macro brief:', dirKey)
+      setAutoCheckedDirs((prev) => new Set(prev).add(dirKey))
+
+      try {
+        const guiOverlay = await readGuiAnalyticsLlmOverlay()
+        // First check if a cached brief exists
+        const checkRes = await fetch(joinServerUrl(serverUrl, '/analytics/ollama-report-check'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            output_dir: selectedDir,
+            force_refresh: false,
+            gui_llm_overlay: guiOverlay ?? {},
+          }),
+        })
+        if (!checkRes.ok) {
+          console.log('[AnalyticsView] Cache check failed, skipping auto-load')
+          return
+        }
+        const checkData = (await checkRes.json()) as { has_cached_brief: boolean }
+
+        if (!checkData.has_cached_brief) {
+          console.log('[AnalyticsView] No cached brief found, skipping auto-load (user must click button)')
+          return
+        }
+
+        console.log('[AnalyticsView] Cached brief found, auto-loading...')
+        // Only load if cache exists
+        void fetchLlm(false, { silent: true })
+      } catch (e) {
+        console.error('[AnalyticsView] Error checking for cached brief:', e)
+      }
+    }
+
+    void checkAndLoadCachedBrief()
+  }, [snapshot, serverUrl, selectedDir, isServerRunning, fetchLlm, autoCheckedDirs])
 
   const selectedResult = useMemo(
     () =>
-      sortedResults.find((r) => normalizeOutputDirKey(r.outputDir) === normalizeOutputDirKey(selectedDir)) ?? null,
+      sortedResults.find((r) => normalizeAnalyticsOutputDirKey(r.outputDir) === normalizeAnalyticsOutputDirKey(selectedDir)) ?? null,
     [sortedResults, selectedDir]
   )
 
@@ -463,18 +558,21 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
       throw new Error(row?.error?.trim() || 'Metadata refresh failed')
     }
     bumpGalleryDiskRevision()
-  }, [serverUrl, selectedDir, watchUrl, bumpGalleryDiskRevision])
+    await fetchSnapshot({ silent: true })
+  }, [serverUrl, selectedDir, watchUrl, bumpGalleryDiskRevision, fetchSnapshot])
 
   const runTrackedMetadataRefresh = useCallback(async () => {
     if (!watchUrl || !selectedDir) {
       throw new Error('Missing folder or video URL.')
     }
+    const videoTitleLine = selectedResult?.title?.trim() || undefined
     const jobId = `${ANALYTICS_METADATA_JOB_PREFIX}${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}`}`
     addJob(
       {
         id: jobId,
         url: watchUrl,
-        videoTitle: 'Analytics · video details',
+        launchCaption: 'Analytics - Refresh video metadata',
+        videoTitle: videoTitleLine,
         status: 'running',
         progress: 20,
         type: 'video',
@@ -519,6 +617,7 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
   }, [
     watchUrl,
     selectedDir,
+    selectedResult,
     addJob,
     addJobLog,
     updateJob,
@@ -532,14 +631,16 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
     const res = await fetch(joinServerUrl(serverUrl, '/scrape/video'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+        body: JSON.stringify({
         url: watchUrl,
+        output_dir: selectedDir,
         include_video: false,
         include_comments: true,
         include_transcript: false,
         include_thumbnails: false,
         include_download: false,
         max_comments: maxComments,
+        max_replies_per_thread: maxRepliesPerThread,
         comments_snapshot_before_write: true,
         comments_fetch_all: true,
         transcript_format: 'txt',
@@ -562,7 +663,7 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
     }
     const outputDir =
       typeof data.output_dir === 'string' && data.output_dir.trim().length > 0 ? data.output_dir : selectedDir
-    if (normalizeOutputDirKey(outputDir) !== normalizeOutputDirKey(selectedDir)) {
+    if (normalizeAnalyticsOutputDirKey(outputDir) !== normalizeAnalyticsOutputDirKey(selectedDir)) {
       toast(
         `Comments were written to ${outputDir}, which differs from the folder selected above. Pick that folder or use the standard output layout so analytics matches the scrape.`,
         { duration: 9000 }
@@ -571,6 +672,8 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
     addJob({
       id: jobId,
       url: watchUrl,
+      launchCaption: 'Analytics - Refresh comments',
+      videoTitle: selectedResult?.title?.trim() || undefined,
       status: 'running',
       progress: 0,
       type: 'comments',
@@ -579,7 +682,7 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
       startedAt: new Date().toISOString(),
     })
     setActiveJob(jobId)
-    const outcome = await pollJobUntilTerminal(serverUrl, jobId)
+    const outcome = await pollJobUntilTerminal(serverUrl, jobId, { requiredOperations: ['comments'] })
     if (!outcome.ok) {
       const errMsg = outcome.error ?? 'Comment scrape failed'
       updateJob(jobId, {
@@ -597,15 +700,19 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
       outputDir,
     })
     bumpGalleryDiskRevision()
+    await fetchSnapshot({ silent: true })
   }, [
     serverUrl,
     selectedDir,
     watchUrl,
     maxComments,
+    maxRepliesPerThread,
     bumpGalleryDiskRevision,
+    fetchSnapshot,
     addJob,
     setActiveJob,
     updateJob,
+    selectedResult,
   ])
 
   const handleRefreshVideoMetadata = useCallback(async () => {
@@ -614,13 +721,12 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
     try {
       await runTrackedMetadataRefresh()
       toast.success('Video details refreshed', { id: loadingToast })
-      await fetchSnapshot({ silent: true })
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e), { id: loadingToast })
     } finally {
       setMetaRefreshing(false)
     }
-  }, [runTrackedMetadataRefresh, fetchSnapshot])
+  }, [runTrackedMetadataRefresh])
 
   const handleRefreshComments = useCallback(async () => {
     const loadingToast = toast.loading('Refreshing comments (see Scrape Jobs for live progress)…')
@@ -628,28 +734,60 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
     try {
       await executeCommentsRefreshCore()
       toast.success('Comments refreshed', { id: loadingToast })
-      await fetchSnapshot({ silent: true })
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e), { id: loadingToast })
     } finally {
       setCommentsRefreshing(false)
     }
-  }, [executeCommentsRefreshCore, fetchSnapshot])
+  }, [executeCommentsRefreshCore])
 
   const handleRefreshAll = useCallback(async () => {
-    const loadingToast = toast.loading('Refreshing video details, then comments…')
+    const loadingToast = toast.loading('Refreshing video details and comments in parallel…')
     setAllRefreshing(true)
     try {
-      await runTrackedMetadataRefresh()
-      await executeCommentsRefreshCore()
-      toast.success('Video details and comments refreshed', { id: loadingToast })
-      await fetchSnapshot({ silent: true })
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e), { id: loadingToast })
+      const [meta, comm] = await Promise.allSettled([
+        runTrackedMetadataRefresh(),
+        executeCommentsRefreshCore(),
+      ])
+      const metaOk = meta.status === 'fulfilled'
+      const commOk = comm.status === 'fulfilled'
+      if (metaOk && commOk) {
+        toast.success('Video details and comments refreshed', { id: loadingToast })
+      } else if (!metaOk && !commOk) {
+        const a =
+          meta.status === 'rejected'
+            ? meta.reason instanceof Error
+              ? meta.reason.message
+              : String(meta.reason)
+            : ''
+        const b =
+          comm.status === 'rejected'
+            ? comm.reason instanceof Error
+              ? comm.reason.message
+              : String(comm.reason)
+            : ''
+        toast.error(`Video details: ${a}. Comments: ${b}`, { id: loadingToast })
+      } else if (!metaOk) {
+        const a =
+          meta.status === 'rejected'
+            ? meta.reason instanceof Error
+              ? meta.reason.message
+              : String(meta.reason)
+            : ''
+        toast.error(`Video details failed: ${a}`, { id: loadingToast })
+      } else {
+        const b =
+          comm.status === 'rejected'
+            ? comm.reason instanceof Error
+              ? comm.reason.message
+              : String(comm.reason)
+            : ''
+        toast.error(`Comments failed: ${b}`, { id: loadingToast })
+      }
     } finally {
       setAllRefreshing(false)
     }
-  }, [runTrackedMetadataRefresh, executeCommentsRefreshCore, fetchSnapshot])
+  }, [runTrackedMetadataRefresh, executeCommentsRefreshCore])
 
   const hist = snapshot?.metadata_history ?? []
 
@@ -753,11 +891,14 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
               {sortedResults.length === 0 ? (
                 <option value="">No completed scrapes found</option>
               ) : (
-                sortedResults.map((r) => (
-                  <option key={r.id} value={r.outputDir}>
-                    {r.title} ({r.videoId})
-                  </option>
-                ))
+                <>
+                  <option value="">-- Select Video --</option>
+                  {sortedResults.map((r) => (
+                    <option key={r.id} value={r.outputDir}>
+                      {r.title} ({r.videoId})
+                    </option>
+                  ))}
+                </>
               )}
             </select>
           </div>
@@ -842,11 +983,6 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
                       <li>
                         <span className="text-space-500">Comments scraped (file):</span>{' '}
                         {snapshot.comment_stats.total_flat.toLocaleString()}
-                        {historyPoint ? (
-                          <span className="mt-1 block text-xs text-space-500">
-                            From the current comments file, not the metadata date above.
-                          </span>
-                        ) : null}
                       </li>
                     ) : null}
                   </ul>
@@ -930,17 +1066,14 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
             </div>
           </div>
 
-          {snapshot.notes.length > 0 ? (
+          {selectedDir ? (
             <CollapsibleSection
-              title="Notes"
-              subtitle="Snapshot warnings and file hints from the API."
-              contentClassName="p-5"
+              className="glass-card overflow-visible"
+              title="Your notes"
+              subtitle="Auto-saved under analytics_user_notes in this scrape folder (plain text files + manifest)."
+              contentClassName="p-0 overflow-visible"
             >
-              <ul className="list-disc space-y-1 pl-5 text-sm text-space-400">
-                {snapshot.notes.map((n) => (
-                  <li key={n}>{n}</li>
-                ))}
-              </ul>
+              <AnalyticsUserNotesPanel outputDir={selectedDir} variant="embedded" />
             </CollapsibleSection>
           ) : null}
 
@@ -1181,6 +1314,20 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ onNavigateToGallery }) =>
               </div>
             ) : null}
           </CollapsibleSection>
+
+          <AnalyticsChatPanel
+            serverUrl={serverUrl ?? ''}
+            selectedDir={selectedDir}
+            snapshot={snapshot}
+            folderReady={
+              Boolean(
+                snapshot &&
+                  selectedDir.trim() &&
+                  normalizeAnalyticsOutputDirKey(snapshot.output_dir) === normalizeAnalyticsOutputDirKey(selectedDir),
+              )
+            }
+            isServerRunning={isServerRunning}
+          />
         </motion.div>
       ) : null}
     </div>

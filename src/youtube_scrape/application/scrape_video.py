@@ -33,7 +33,10 @@ class ScrapeVideoService:
         """Return a ``ResultEnvelope`` of kind ``video``."""
         url = watch_url(url_or_id)
         log.info("scrape_video_start", extra={"url": url})
-        player, initial, _html = await self._browser.extract_watch_payload(url)
+        player, initial, _html = await self._browser.extract_watch_payload(
+            url,
+            hydrate_for_comments=False,
+        )
         meta = parse_video_metadata(player)
         meta = enrich_video_metadata_from_initial(meta, initial, now_utc=datetime.now(UTC))
         meta = await self._maybe_enrich_from_return_youtube_dislike(meta)

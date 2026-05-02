@@ -120,6 +120,9 @@ class GuiAnalyticsLlmOverlay(BaseModel):
     anthropic_model: str | None = None
     google_gemini_api_key: str | None = None
     google_gemini_model: str | None = None
+    analytics_rag_enabled: bool | None = None
+    analytics_rag_top_k: int | None = None
+    ollama_embed_model: str | None = None
 
 
 class AnalyticsLlmProbePayload(BaseModel):
@@ -129,6 +132,13 @@ class AnalyticsLlmProbePayload(BaseModel):
     provider: str
     message: str
     models_sample: list[str] | None = None
+
+
+class AnalyticsOllamaModelsPayload(BaseModel):
+    """Result of ``POST /analytics/ollama-list-models`` (full tag list for GUI dropdown)."""
+
+    base_url: str = Field(description="Normalized Ollama daemon base URL used for /api/tags.")
+    models: list[str] = Field(default_factory=list)
 
 
 class OllamaReportPayload(BaseModel):
@@ -143,6 +153,88 @@ class OllamaReportPayload(BaseModel):
     brief: OllamaMacroBrief
 
 
+class AnalyticsChatMessage(BaseModel):
+    """One conversational turn exposed to ``/analytics/chat`` (no synthetic priming pairs)."""
+
+    role: Literal["user", "assistant"]
+    content: str = Field(..., min_length=1, max_length=32_000)
+
+
+class AnalyticsChatRequestBody(BaseModel):
+    """Body for conversational analytics over scraped artifacts."""
+
+    output_dir: str = Field(..., description="Absolute path to a scrape output folder under configured roots")
+    messages: list[AnalyticsChatMessage] = Field(
+        ...,
+        min_length=1,
+        description="Odd-length transcript ending in user — alternating user then assistant.",
+    )
+    gui_llm_overlay: GuiAnalyticsLlmOverlay | None = Field(
+        default=None,
+        description="Same optional GUI snapshot used by other Analytics LLM routes.",
+    )
+
+
+class AnalyticsChatResponse(BaseModel):
+    """Natural-language assistant reply grounded in scraped context."""
+
+    schema_version: Literal["1"] = "1"
+    assistant: str
+    warnings: list[str] = Field(default_factory=list)
+    provider: str
+    model: str
+    llm_latency_ms: int = Field(
+        ...,
+        ge=0,
+        description="Wall-clock time for the upstream LLM request (milliseconds).",
+    )
+    scrape_bundle_chars: int = Field(
+        ...,
+        ge=0,
+        description="Character length of the scrape text bundle injected into chat (excluding priming wording).",
+    )
+    estimated_scrape_bundle_tokens: int = Field(
+        ...,
+        ge=0,
+        description="Rough token estimate from scrape_bundle_chars÷4 — not tokenizer-accurate.",
+    )
+    estimated_request_prompt_tokens: int = Field(
+        ...,
+        ge=0,
+        description="Rough token estimate from full system+conversation payload chars÷4.",
+    )
+    prompt_tokens: int | None = Field(
+        default=None,
+        description="Provider-native prompt/input token count when returned by the API.",
+    )
+    completion_tokens: int | None = Field(
+        default=None,
+        description="Provider-native completion/output token count when returned by the API.",
+    )
+    total_tokens: int | None = Field(
+        default=None,
+        description="Provider-native total token count when returned (or summed when inferable).",
+    )
+    analytics_rag_mode: Literal["legacy", "hybrid", "fallback_meta"] | None = Field(
+        default=None,
+        description="legacy = full scrape bundle; hybrid = header + retrieved excerpts; fallback_meta = metadata-only when RAG fails.",
+    )
+    analytics_rag_chunks_used: int | None = Field(
+        default=None,
+        description="Chunks inserted into the priming payload when mode=hybrid.",
+    )
+    analytics_rag_index_build_ms: int | None = Field(
+        default=None,
+        ge=0,
+        description="Wall time to build or rebuild the on-disk RAG index for this request (0 when reused).",
+    )
+    analytics_rag_embed_ms: int | None = Field(
+        default=None,
+        ge=0,
+        description="Wall time for query embedding(s) on this request when mode=hybrid.",
+    )
+
+
 class AnalyticsLlmCacheFile(BaseModel):
     """On-disk cache next to scrape artifacts."""
 
@@ -151,3 +243,63 @@ class AnalyticsLlmCacheFile(BaseModel):
     brief_schema_version: str
     generated_at: str
     brief: OllamaMacroBrief
+
+
+class RagStatusPayload(BaseModel):
+    """Status of RAG vectorization for a scrape output folder."""
+
+    schema_version: Literal["1"] = "1"
+    output_dir: str
+    is_vectorized: bool
+    chunk_count: int = 0
+    embed_model: str | None = None
+    embed_dim: int | None = None
+    last_updated: str | None = None
+    eligible_sources: list[str] = Field(default_factory=list)
+    missing_sources: list[str] = Field(default_factory=list)
+    has_download_only: bool = False
+
+
+class RagBuildRequest(BaseModel):
+    """Request to trigger RAG vectorization build."""
+
+    output_dir: str = Field(..., description="Absolute path to a scrape output folder")
+    force_refresh: bool = Field(default=False, description="Force rebuild even if index is up to date")
+    gui_llm_overlay: GuiAnalyticsLlmOverlay | None = Field(
+        default=None,
+        description="Optional GUI snapshot for Ollama settings (embed model, base URL)",
+    )
+
+
+class RagBuildResponse(BaseModel):
+    """Response after triggering RAG build."""
+
+    schema_version: Literal["1"] = "1"
+    job_id: str
+    output_dir: str
+    status: Literal["started", "failed"]
+    message: str
+
+
+class RagGlobalStatusItem(BaseModel):
+    """Vectorization status for one video in the global view."""
+
+    output_dir: str
+    video_id: str | None = None
+    title: str | None = None
+    is_vectorized: bool
+    chunk_count: int = 0
+    embed_model: str | None = None
+    last_updated: str | None = None
+    has_scrape_data: bool = True
+
+
+class RagGlobalStatusPayload(BaseModel):
+    """Global view of vectorization status across all videos."""
+
+    schema_version: Literal["1"] = "1"
+    videos: list[RagGlobalStatusItem] = Field(default_factory=list)
+    total_count: int = 0
+    vectorized_count: int = 0
+    pending_count: int = 0
+    download_only_count: int = 0

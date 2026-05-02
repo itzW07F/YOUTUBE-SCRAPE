@@ -13,9 +13,8 @@ import {
   Zap,
   MessageSquare,
   HardDrive,
-  BarChart3,
 } from 'lucide-react'
-import { useScrapeStore } from '../stores/scrapeStore'
+import { useScrapeStore, formatJobLaunchHeading, type ScrapeQuickPreset } from '../stores/scrapeStore'
 import { useDashboardTrackerStore } from '../stores/dashboardTrackerStore'
 
 const RECENT_ACTIVITY_LIMIT = 3
@@ -43,10 +42,16 @@ function formatStorageBytes(bytes: number): string {
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
-  const { jobs, applyScrapePreset } = useScrapeStore()
+  const { jobs, applyScrapePreset, setPendingDashboardQuickPreset } = useScrapeStore()
   const { scrapesStarted, commentsScraped, totalStorageBytes } = useDashboardTrackerStore()
 
   const recentJobs = jobs.slice(0, RECENT_ACTIVITY_LIMIT)
+
+  const goQuickScrape = (preset: ScrapeQuickPreset) => {
+    applyScrapePreset(preset)
+    setPendingDashboardQuickPreset(preset)
+    onNavigate('scrape', { preserveScrapeOptions: true })
+  }
 
   const statCards = [
     {
@@ -154,48 +159,38 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                   icon={Layers}
                   label="Scrape All Data"
                   onClick={() => {
-                    applyScrapePreset('all')
-                    onNavigate('scrape', { preserveScrapeOptions: true })
+                    goQuickScrape('all')
                   }}
                 />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <QuickAction
-                icon={BarChart3}
-                label="Open Analytics"
-                onClick={() => onNavigate('analytics')}
-              />
-              <QuickAction
                 icon={Youtube}
                 label="Scrape Video MetaData"
                 onClick={() => {
-                  applyScrapePreset('video')
-                  onNavigate('scrape', { preserveScrapeOptions: true })
+                  goQuickScrape('video')
                 }}
               />
               <QuickAction
                 icon={FileText}
                 label="Scrape Comments/Replies"
                 onClick={() => {
-                  applyScrapePreset('comments')
-                  onNavigate('scrape', { preserveScrapeOptions: true })
+                  goQuickScrape('comments')
                 }}
               />
               <QuickAction
                 icon={Image}
                 label="Scrape Video Thumbnails"
                 onClick={() => {
-                  applyScrapePreset('thumbnails')
-                  onNavigate('scrape', { preserveScrapeOptions: true })
+                  goQuickScrape('thumbnails')
                 }}
               />
               <QuickAction
                 icon={Download}
                 label="Scrape Video/Audio"
                 onClick={() => {
-                  applyScrapePreset('download')
-                  onNavigate('scrape', { preserveScrapeOptions: true })
+                  goQuickScrape('download')
                 }}
               />
             </div>
@@ -239,8 +234,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                     'bg-amber-500'
                   }`} />
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-white truncate">{job.url}</p>
-                    <p className="text-xs text-space-400">
+                    <p className="text-sm text-white truncate" title={formatJobLaunchHeading(job)}>
+                      {formatJobLaunchHeading(job)}
+                    </p>
+                    <p className="text-xs text-space-300 truncate" title={job.videoTitle || job.url}>
+                      {job.videoTitle || job.url}
+                    </p>
+                    <p className="text-xs text-space-500">
                       {job.type} • {job.status}
                     </p>
                   </div>

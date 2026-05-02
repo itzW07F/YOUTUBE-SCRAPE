@@ -4,12 +4,43 @@ import {
   type AnalyticsLlmProviderId,
 } from '../config/analyticsLlmSettings'
 
+/** Same shape as `persistAnalyticsLlmUiToStore` argument — current Settings form state. */
+export type AnalyticsLlmUiFields = {
+  llmProvider: AnalyticsLlmProviderId
+  analyticsLlmEnabled: boolean
+  ollamaBaseUrl: string
+  ollamaModel: string
+  analyticsRagEnabled: boolean
+  ollamaEmbedModel: string
+  openaiCompatibleBaseUrl: string
+  openaiCompatibleApiKey: string
+  openaiCompatibleModel: string
+  anthropicBaseUrl: string
+  anthropicApiKey: string
+  anthropicModel: string
+  googleGeminiApiKey: string
+  googleGeminiModel: string
+}
+
 function stripTrailingSlashes(s: string): string {
   const t = s.trim()
   if (!t) {
     return t
   }
   return t.replace(/\/+$/, '')
+}
+
+/** Aligns with Python `normalize_ollama_base_url` for comparing Ollama host strings (cache vs form). */
+export function normalizeOllamaBaseUrlForCache(raw: string): string {
+  const base = stripTrailingSlashes(raw)
+  if (!base) {
+    return base
+  }
+  const low = base.toLowerCase()
+  if (low.startsWith('http://') || low.startsWith('https://')) {
+    return base
+  }
+  return `http://${base}`
 }
 
 function providerFromUnknown(raw: unknown): AnalyticsLlmProviderId {
@@ -37,21 +68,31 @@ function boolOrDefault(raw: unknown, fallback: boolean): boolean {
 /** Full GUI snapshot merged into Python Settings for Analytics LLM (snake_case = Pydantic field names). */
 export type GuiAnalyticsLlmOverlaySnakeCase = Record<string, string | boolean>
 
+/** Build merge payload from visible Settings fields (avoids stale store before debounced autosave). */
+export function buildGuiAnalyticsLlmOverlaySnakeCase(fields: AnalyticsLlmUiFields): GuiAnalyticsLlmOverlaySnakeCase {
+  const d = ANALYTICS_LLM_STORE_DEFAULTS
+  return {
+    analytics_llm_provider: fields.llmProvider,
+    analytics_ollama_enabled: fields.analyticsLlmEnabled,
+    ollama_base_url: stripTrailingSlashes(stringOrDefault(fields.ollamaBaseUrl, d.ollamaBaseUrl)),
+    ollama_model: stringOrDefault(fields.ollamaModel, d.ollamaModel),
+    analytics_rag_enabled: fields.analyticsRagEnabled,
+    ollama_embed_model: stringOrDefault(fields.ollamaEmbedModel, d.ollamaEmbedModel),
+    openai_compatible_base_url: stripTrailingSlashes(
+      stringOrDefault(fields.openaiCompatibleBaseUrl, d.openaiCompatibleBaseUrl)
+    ),
+    openai_compatible_api_key: stringOrDefault(fields.openaiCompatibleApiKey, d.openaiCompatibleApiKey),
+    openai_compatible_model: stringOrDefault(fields.openaiCompatibleModel, d.openaiCompatibleModel),
+    anthropic_base_url: stripTrailingSlashes(stringOrDefault(fields.anthropicBaseUrl, d.anthropicBaseUrl)),
+    anthropic_api_key: stringOrDefault(fields.anthropicApiKey, d.anthropicApiKey),
+    anthropic_model: stringOrDefault(fields.anthropicModel, d.anthropicModel),
+    google_gemini_api_key: stringOrDefault(fields.googleGeminiApiKey, d.googleGeminiApiKey),
+    google_gemini_model: stringOrDefault(fields.googleGeminiModel, d.googleGeminiModel),
+  }
+}
+
 /** Persist current Settings form state to electron-store (same mapping as spawn env extras). */
-export async function persistAnalyticsLlmUiToStore(fields: {
-  llmProvider: AnalyticsLlmProviderId
-  analyticsLlmEnabled: boolean
-  ollamaBaseUrl: string
-  ollamaModel: string
-  openaiCompatibleBaseUrl: string
-  openaiCompatibleApiKey: string
-  openaiCompatibleModel: string
-  anthropicBaseUrl: string
-  anthropicApiKey: string
-  anthropicModel: string
-  googleGeminiApiKey: string
-  googleGeminiModel: string
-}): Promise<void> {
+export async function persistAnalyticsLlmUiToStore(fields: AnalyticsLlmUiFields): Promise<void> {
   if (!window.electronAPI) {
     return
   }
@@ -59,6 +100,8 @@ export async function persistAnalyticsLlmUiToStore(fields: {
   await window.electronAPI.storeSet('analyticsOllamaEnabled', fields.analyticsLlmEnabled)
   await window.electronAPI.storeSet('ollamaBaseUrl', fields.ollamaBaseUrl.trim())
   await window.electronAPI.storeSet('ollamaModel', fields.ollamaModel.trim())
+  await window.electronAPI.storeSet('analyticsRagEnabled', fields.analyticsRagEnabled)
+  await window.electronAPI.storeSet('ollamaEmbedModel', fields.ollamaEmbedModel.trim())
   await window.electronAPI.storeSet('openaiCompatibleBaseUrl', fields.openaiCompatibleBaseUrl.trim())
   await window.electronAPI.storeSet('openaiCompatibleApiKey', fields.openaiCompatibleApiKey)
   await window.electronAPI.storeSet('openaiCompatibleModel', fields.openaiCompatibleModel.trim())
@@ -80,6 +123,8 @@ export async function readGuiAnalyticsLlmOverlay(): Promise<GuiAnalyticsLlmOverl
     analyticsOllamaEnabled,
     ollamaBaseUrl,
     ollamaModel,
+    analyticsRagEnabled,
+    ollamaEmbedModel,
     openaiCompatibleBaseUrl,
     openaiCompatibleApiKey,
     openaiCompatibleModel,
@@ -93,6 +138,8 @@ export async function readGuiAnalyticsLlmOverlay(): Promise<GuiAnalyticsLlmOverl
     window.electronAPI.storeGet('analyticsOllamaEnabled'),
     window.electronAPI.storeGet('ollamaBaseUrl'),
     window.electronAPI.storeGet('ollamaModel'),
+    window.electronAPI.storeGet('analyticsRagEnabled'),
+    window.electronAPI.storeGet('ollamaEmbedModel'),
     window.electronAPI.storeGet('openaiCompatibleBaseUrl'),
     window.electronAPI.storeGet('openaiCompatibleApiKey'),
     window.electronAPI.storeGet('openaiCompatibleModel'),
@@ -108,6 +155,8 @@ export async function readGuiAnalyticsLlmOverlay(): Promise<GuiAnalyticsLlmOverl
     analytics_ollama_enabled: boolOrDefault(analyticsOllamaEnabled, d.analyticsOllamaEnabled),
     ollama_base_url: stripTrailingSlashes(stringOrDefault(ollamaBaseUrl, d.ollamaBaseUrl)),
     ollama_model: stringOrDefault(ollamaModel, d.ollamaModel),
+    analytics_rag_enabled: boolOrDefault(analyticsRagEnabled, d.analyticsRagEnabled),
+    ollama_embed_model: stringOrDefault(ollamaEmbedModel, d.ollamaEmbedModel),
     openai_compatible_base_url: stripTrailingSlashes(
       stringOrDefault(openaiCompatibleBaseUrl, d.openaiCompatibleBaseUrl)
     ),

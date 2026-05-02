@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
+
+
+@runtime_checkable
+class AnalyticsChatEmbedder(Protocol):
+    """Embeds query/doc strings for optional analytics RAG (tests may stub)."""
+
+    async def embed(self, text: str) -> list[float]: ...
 
 
 class Clock(Protocol):
@@ -62,13 +69,21 @@ class HttpClient(Protocol):
 class BrowserSession(Protocol):
     """Camoufox-backed browser for extracting embedded JSON from watch pages."""
 
-    async def fetch_text_in_watch_context(self, watch_url: str, resource_url: str) -> str:
+    async def fetch_text_in_watch_context(
+        self,
+        watch_url: str,
+        resource_url: str,
+        *,
+        hydrate_for_comments: bool = False,
+    ) -> str:
         """GET ``resource_url`` after loading ``watch_url`` using the browser request context (cookies)."""
         ...
 
     async def extract_watch_payload(
         self,
         watch_url: str,
+        *,
+        hydrate_for_comments: bool = True,
     ) -> tuple[dict[str, Any], dict[str, Any], str]:
         """Navigate to ``watch_url`` and return ``(player_response, yt_initial_data, html)``.
 

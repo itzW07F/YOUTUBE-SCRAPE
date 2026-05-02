@@ -24,6 +24,14 @@ import {
   readOutputArtifact,
   readOutputVideoMeta,
 } from './output-read'
+import {
+  createAnalyticsUserNote,
+  deleteAnalyticsUserNote,
+  listAnalyticsUserNotes,
+  readAnalyticsUserNote,
+  renameAnalyticsUserNote,
+  writeAnalyticsUserNote,
+} from './analytics-user-notes'
 
 // electron-store@10 is ESM-only; bundled CJS `require` yields `{ default: Store }` under Electron.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -327,6 +335,54 @@ app.whenReady().then(() => {
 
   ipcMain.handle('output:deleteScrapeDir', (_, outputDir: string) => {
     return deleteOutputScrapeDir(outputDir, store)
+  })
+
+  ipcMain.handle('analyticsNotes:list', (_, outputDir: string) => {
+    const r = listAnalyticsUserNotes(outputDir, store)
+    if (!r.ok) {
+      return { ok: false as const, error: r.error }
+    }
+    return { ok: true as const, files: r.data.files }
+  })
+
+  ipcMain.handle('analyticsNotes:read', (_, outputDir: string, fileId: string) => {
+    const r = readAnalyticsUserNote(outputDir, fileId, store)
+    if (!r.ok) {
+      return { ok: false as const, error: r.error }
+    }
+    return { ok: true as const, content: r.data.content }
+  })
+
+  ipcMain.handle('analyticsNotes:write', (_, outputDir: string, fileId: string, content: string) => {
+    const r = writeAnalyticsUserNote(outputDir, fileId, content, store)
+    if (!r.ok) {
+      return { ok: false as const, error: r.error }
+    }
+    return { ok: true as const }
+  })
+
+  ipcMain.handle('analyticsNotes:create', (_, outputDir: string, displayName: string | undefined) => {
+    const r = createAnalyticsUserNote(outputDir, displayName, store)
+    if (!r.ok) {
+      return { ok: false as const, error: r.error }
+    }
+    return { ok: true as const, file: r.data.file }
+  })
+
+  ipcMain.handle('analyticsNotes:delete', (_, outputDir: string, fileId: string) => {
+    const r = deleteAnalyticsUserNote(outputDir, fileId, store)
+    if (!r.ok) {
+      return { ok: false as const, error: r.error }
+    }
+    return { ok: true as const, files: r.data.files }
+  })
+
+  ipcMain.handle('analyticsNotes:rename', (_, outputDir: string, fileId: string, displayName: string) => {
+    const r = renameAnalyticsUserNote(outputDir, fileId, displayName, store)
+    if (!r.ok) {
+      return { ok: false as const, error: r.error }
+    }
+    return { ok: true as const, file: r.data.file }
   })
 
   // IPC handlers for window controls

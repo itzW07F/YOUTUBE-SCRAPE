@@ -84,3 +84,73 @@ export interface OllamaReportPayload {
   comment_digest_meta: Record<string, unknown>
   brief: OllamaMacroBrief
 }
+
+/** Client-visible chat turns mirrored in ``POST /analytics/chat`` ``messages``. */
+export interface AnalyticsChatApiMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export interface AnalyticsChatResponsePayload {
+  schema_version: '1'
+  assistant: string
+  warnings: string[]
+  provider: string
+  model: string
+  llm_latency_ms: number
+  scrape_bundle_chars: number
+  estimated_scrape_bundle_tokens: number
+  estimated_request_prompt_tokens: number
+  prompt_tokens: number | null
+  completion_tokens: number | null
+  total_tokens: number | null
+  analytics_rag_mode?: 'legacy' | 'hybrid' | 'fallback_meta' | null
+  analytics_rag_chunks_used?: number | null
+  analytics_rag_index_build_ms?: number | null
+  analytics_rag_embed_ms?: number | null
+}
+
+/** RAG vectorization status for a scrape output folder. */
+export interface RagStatusPayload {
+  schema_version: '1'
+  output_dir: string
+  is_vectorized: boolean
+  chunk_count: number
+  embed_model: string | null
+  embed_dim: number | null
+  last_updated: string | null
+  eligible_sources: string[]
+  missing_sources: string[]
+  has_download_only: boolean
+}
+
+/** Response after triggering RAG build. */
+export interface RagBuildResponse {
+  schema_version: '1'
+  job_id: string
+  output_dir: string
+  status: 'started' | 'failed'
+  message: string
+}
+
+/** Vectorization status for one video in global view. */
+export interface RagGlobalStatusItem {
+  output_dir: string
+  video_id: string | null
+  title: string | null
+  is_vectorized: boolean
+  chunk_count: number
+  embed_model: string | null
+  last_updated: string | null
+  has_scrape_data: boolean
+}
+
+/** Global view of vectorization status across all videos. */
+export interface RagGlobalStatusPayload {
+  schema_version: '1'
+  videos: RagGlobalStatusItem[]
+  total_count: number
+  vectorized_count: number
+  pending_count: number
+  download_only_count: number
+}

@@ -54,7 +54,7 @@ comments:
   max_comments: null                  # Cap when fetch_all is false (null = not used)
   fetch_all: true                     # All comments up to safety_ceiling
   include_replies: true              # Include reply comments
-  max_replies_per_thread: 3          # Max replies per thread (null = unlimited)
+  max_replies_per_thread: null            # null = all replies per thread
   safety_ceiling: 50000              # Hard cap to prevent runaway scraping
 
 # Transcript/caption settings

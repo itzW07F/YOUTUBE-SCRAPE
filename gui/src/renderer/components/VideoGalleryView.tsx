@@ -442,7 +442,8 @@ const VideoGalleryView: React.FC<VideoGalleryViewProps> = ({
           selected.length === 1
             ? selected[0].url
             : `${selected.length} selected videos`,
-        videoTitle: 'Gallery metadata refresh',
+        launchCaption: 'Gallery - Metadata refresh',
+        videoTitle: selected.length === 1 ? selected[0].title : `${selected.length} videos`,
         status: 'running',
         progress: 12,
         type: 'video',

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ScrapeJob } from '../stores/scrapeStore'
+import { fetchYoutubeOembedDisplay } from '../utils/youtubeDisplayMeta'
 
 export interface MediaFileInfo {
   name: string
@@ -37,6 +38,7 @@ export interface VideoResult {
 
 interface VideoMetaRead {
   hasArtifacts: boolean
+  eligibleForBrowseUi: boolean
   videoId: string | null
   title: string | null
   channelTitle: string | null
@@ -235,25 +237,39 @@ export function useVideoResults(jobs: ScrapeJob[], diskRevision = 0): VideoResul
         let channelTitle = result.channelTitle
         const thumbnailSources: Array<string | null | undefined> = []
         let meta: VideoMetaRead | null = null
+        let diskTitle = ''
+        let diskChannel = ''
 
         try {
           meta = (await window.electronAPI.readOutputVideoMeta(result.outputDir)) as VideoMetaRead | null
-          if (meta) {
-            if (!meta.hasArtifacts) {
-              continue
-            }
-            videoId = meta.videoId || videoId
-            title = meta.title || title
-            channelTitle = meta.channelTitle || channelTitle
-            thumbnailSources.push(
-              meta.localThumbPath ? window.electronAPI.getAppMediaUrl(meta.localThumbPath) : '',
-              meta.thumbnailUrl || '',
-              ...canonicalThumbnailSources(videoId)
-            )
-          }
         } catch {
           meta = null
-          // Keep row metadata and canonical thumbnail fallbacks
+        }
+        if (!meta || !meta.hasArtifacts || !meta.eligibleForBrowseUi) {
+          continue
+        }
+        videoId = meta.videoId || videoId
+        diskTitle = (meta.title ?? '').trim()
+        diskChannel = (meta.channelTitle ?? '').trim()
+        title = diskTitle || title
+        channelTitle = diskChannel || channelTitle
+        thumbnailSources.push(
+          meta.localThumbPath ? window.electronAPI.getAppMediaUrl(meta.localThumbPath) : '',
+          meta.thumbnailUrl || '',
+          ...canonicalThumbnailSources(videoId)
+        )
+
+        const needsTitle = !diskTitle
+        const needsChannel = !diskChannel || channelTitle === 'Unknown'
+
+        if (videoId && (needsTitle || needsChannel)) {
+          const o = await fetchYoutubeOembedDisplay(videoId)
+          if (needsTitle && o?.title?.trim()) {
+            title = o.title.trim()
+          }
+          if (needsChannel && o?.authorName) {
+            channelTitle = o.authorName
+          }
         }
 
         thumbnailSources.push(...result.thumbnailSources)
