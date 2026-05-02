@@ -17,6 +17,83 @@ export type AnalyticsChatDiag = {
   ragEmbedMs: number | null
 }
 
+/** Running totals for all successful chat completions in this thread (per scrape folder). */
+export type AnalyticsChatSessionMetrics = {
+  requestCount: number
+  totalLatencyMs: number
+  totalRagIndexBuildMs: number
+  totalRagEmbedMs: number
+  totalScrapeBundleChars: number
+  totalEstScrapeTok: number
+  totalEstPromptTok: number
+  sumPromptTokens: number
+  sumCompletionTokens: number
+  sumTotalTokens: number
+  promptTokenReports: number
+  completionTokenReports: number
+  totalTokenReports: number
+}
+
+export function emptySessionMetrics(): AnalyticsChatSessionMetrics {
+  return {
+    requestCount: 0,
+    totalLatencyMs: 0,
+    totalRagIndexBuildMs: 0,
+    totalRagEmbedMs: 0,
+    totalScrapeBundleChars: 0,
+    totalEstScrapeTok: 0,
+    totalEstPromptTok: 0,
+    sumPromptTokens: 0,
+    sumCompletionTokens: 0,
+    sumTotalTokens: 0,
+    promptTokenReports: 0,
+    completionTokenReports: 0,
+    totalTokenReports: 0,
+  }
+}
+
+export function appendDiagToSessionMetrics(
+  prev: AnalyticsChatSessionMetrics,
+  d: AnalyticsChatDiag
+): AnalyticsChatSessionMetrics {
+  return {
+    requestCount: prev.requestCount + 1,
+    totalLatencyMs: prev.totalLatencyMs + d.latencyMs,
+    totalRagIndexBuildMs: prev.totalRagIndexBuildMs + (d.ragIndexBuildMs ?? 0),
+    totalRagEmbedMs: prev.totalRagEmbedMs + (d.ragEmbedMs ?? 0),
+    totalScrapeBundleChars: prev.totalScrapeBundleChars + d.scrapeBundleChars,
+    totalEstScrapeTok: prev.totalEstScrapeTok + d.estScrapeTok,
+    totalEstPromptTok: prev.totalEstPromptTok + d.estPromptTok,
+    sumPromptTokens: prev.sumPromptTokens + (d.promptTokens ?? 0),
+    sumCompletionTokens: prev.sumCompletionTokens + (d.completionTokens ?? 0),
+    sumTotalTokens: prev.sumTotalTokens + (d.totalTokens ?? 0),
+    promptTokenReports: prev.promptTokenReports + (d.promptTokens != null ? 1 : 0),
+    completionTokenReports: prev.completionTokenReports + (d.completionTokens != null ? 1 : 0),
+    totalTokenReports: prev.totalTokenReports + (d.totalTokens != null ? 1 : 0),
+  }
+}
+
+/** Maps session aggregates into the same shape as a single-reply diag for the metrics grid. */
+export function sessionMetricsAsDisplayDiag(sp: AnalyticsChatSessionMetrics): AnalyticsChatDiag {
+  const n = sp.requestCount
+  return {
+    providerModelLine: `Session · ${n} request${n === 1 ? '' : 's'}`,
+    latencyMs: sp.totalLatencyMs,
+    scrapeBundleChars: sp.totalScrapeBundleChars,
+    estScrapeTok: sp.totalEstScrapeTok,
+    estPromptTok: sp.totalEstPromptTok,
+    promptTokens: sp.promptTokenReports > 0 ? sp.sumPromptTokens : null,
+    completionTokens: sp.completionTokenReports > 0 ? sp.sumCompletionTokens : null,
+    totalTokens: sp.totalTokenReports > 0 ? sp.sumTotalTokens : null,
+    ragMode: null,
+    ragChunks: null,
+    ragIndexBuildMs: sp.totalRagIndexBuildMs > 0 ? sp.totalRagIndexBuildMs : null,
+    ragEmbedMs: sp.totalRagEmbedMs > 0 ? sp.totalRagEmbedMs : null,
+  }
+}
+
+export type AnalyticsChatPerfViewMode = 'last' | 'session'
+
 export type AnalyticsChatThreadState = {
   messages: AnalyticsChatApiMessage[]
   draft: string
@@ -24,6 +101,8 @@ export type AnalyticsChatThreadState = {
   err: string | null
   lastWarnings: string[]
   diag: AnalyticsChatDiag | null
+  sessionPerf: AnalyticsChatSessionMetrics
+  perfViewMode: AnalyticsChatPerfViewMode
   retryCount: number
   lastFailedMessages: AnalyticsChatApiMessage[] | null
 }
@@ -36,6 +115,8 @@ export function emptyAnalyticsChatThreadState(): AnalyticsChatThreadState {
     err: null,
     lastWarnings: [],
     diag: null,
+    sessionPerf: emptySessionMetrics(),
+    perfViewMode: 'last',
     retryCount: 0,
     lastFailedMessages: null,
   }
